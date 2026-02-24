@@ -61,7 +61,7 @@ const PortalEmpleado: FC = () => {
 
                 const { data: attData } = await supabase
                     .from('attendance_logs')
-                    .select('*')
+                    .select('id, check_in, check_out, status, guard_id, post_id')
                     .eq('guard_id', guardData.id)
                     .gte('check_in', todayStart.toISOString())
                     .is('check_out', null)
@@ -135,7 +135,7 @@ const PortalEmpleado: FC = () => {
             const { data: attRes, error: attError } = await supabase
                 .from('attendance_logs')
                 .insert([clockData])
-                .select()
+                .select('id, check_in, check_out, status, guard_id, post_id')
                 .single();
 
             if (attError) throw attError;
