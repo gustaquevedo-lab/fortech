@@ -1,7 +1,6 @@
 import { type FC, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
 import { ShieldAlert, Loader2, CheckCircle2 } from 'lucide-react';
 
 const ChangePassword: FC = () => {

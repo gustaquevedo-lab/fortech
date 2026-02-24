@@ -6,8 +6,8 @@ const parsePYG = (val: string): number => {
     return parseInt(cleaned, 10) || 0;
 };
 import {
-    Building, FileSignature, MapPin, Users, Calendar, Plus, CheckCircle2, AlertCircle, X, Loader2,
-    DollarSign, Trash2, Edit3, Search, Filter, Phone, Mail, UserCheck
+    Building, FileSignature, MapPin, Calendar, Plus, X, Loader2,
+    DollarSign, Trash2, Edit3, Search, Phone, Mail, UserCheck
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
@@ -227,10 +227,6 @@ const ModuloContratos: FC = () => {
     const totalGuardsRequired = posts.reduce((s, p) => s + (p.guards_required || 0), 0);
     const valueDifference = selectedContract ? (selectedContract.total_value || 0) - totalPostsValue : 0;
 
-    const allTotalPosts = useMemo(() => contracts.reduce((sum, c) => {
-        // This is approximate since we only have posts for the selected contract
-        return sum;
-    }, 0), [contracts]);
 
     const expiringContracts = useMemo(() => contracts.filter(c => {
         if (!c.end_date) return false;
