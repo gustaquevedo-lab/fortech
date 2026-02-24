@@ -56,13 +56,15 @@ const PortalEmpleado: FC = () => {
                 setEmployee(guardData);
 
                 // Fetch Today's Attendance
-                const today = new Date().toISOString().split('T')[0];
+                const todayStart = new Date();
+                todayStart.setHours(0, 0, 0, 0);
+
                 const { data: attData } = await supabase
                     .from('attendance_logs')
                     .select('*')
                     .eq('guard_id', guardData.id)
-                    .eq('date', today)
-                    .is('time_out', null)
+                    .gte('check_in', todayStart.toISOString())
+                    .is('check_out', null)
                     .maybeSingle();
 
                 if (attData) {
@@ -107,11 +109,11 @@ const PortalEmpleado: FC = () => {
         const clockData = {
             guard_id: employee.id,
             post_id: employee.post_id,
-            date: new Date().toISOString().split('T')[0],
-            time_in: new Date().toLocaleTimeString('en-US', { hour12: false }),
-            lat_in: coords.latitude,
-            lng_in: coords.longitude,
-            status_in: statusIn
+            check_in: new Date().toISOString(),
+            check_in_lat: coords.latitude,
+            check_in_lng: coords.longitude,
+            inside_geofence: statusIn === 'ON_TIME',
+            status: statusIn // ON_TIME, OUT_OF_RANGE
         };
 
         if (weaponInfo && !currentAttendance) {
@@ -155,7 +157,9 @@ const PortalEmpleado: FC = () => {
             }
 
             setCurrentAttendance(attRes);
-            setClockSuccess(`Marcación Exitosa: ¡Entrada registrada a las ${clockData.time_in}!`);
+
+            const timeInStr = new Date(clockData.check_in).toLocaleTimeString('en-US', { hour12: false });
+            setClockSuccess(`Marcación Exitosa: ¡Entrada registrada a las ${timeInStr}!`);
             setShowWeaponModal(false);
 
             setTimeout(() => setClockSuccess(null), 5000);
@@ -207,21 +211,23 @@ const PortalEmpleado: FC = () => {
                     }
 
                     try {
-                        const timeOut = new Date().toLocaleTimeString('en-US', { hour12: false });
+                        const checkOutTime = new Date().toISOString();
+                        const timeOutStr = new Date().toLocaleTimeString('en-US', { hour12: false });
+
                         const { error } = await supabase
                             .from('attendance_logs')
                             .update({
-                                time_out: timeOut,
-                                lat_out: coords.latitude,
-                                lng_out: coords.longitude,
-                                status_out: statusOut
+                                check_out: checkOutTime,
+                                check_out_lat: coords.latitude,
+                                check_out_lng: coords.longitude,
+                                status: statusOut
                             })
                             .eq('id', currentAttendance.id);
 
                         if (error) throw error;
 
                         setCurrentAttendance(null);
-                        setClockSuccess(`Salida Registrada exitosamente a las ${timeOut}.`);
+                        setClockSuccess(`Salida Registrada exitosamente a las ${timeOutStr}.`);
                         setTimeout(() => setClockSuccess(null), 5000);
                     } catch (error: any) {
                         setClockError(error.message || "Error al registrar salida");
@@ -321,7 +327,7 @@ const PortalEmpleado: FC = () => {
                         <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
                             <div className="flex justify-between items-center mb-2">
                                 <span className="text-white font-bold">
-                                    {currentAttendance ? `Marcaste entrada: ${currentAttendance.time_in?.substring(0, 5)}` : 'Turno Regular'}
+                                    {currentAttendance ? `Marcaste entrada: ${new Date(currentAttendance.check_in).toLocaleTimeString('en-US', { hour12: false }).substring(0, 5)}` : 'Turno Regular'}
                                 </span>
                                 {currentAttendance ? (
                                     <span className="bg-emerald-500/20 text-emerald-400 text-xs px-2 py-0.5 rounded font-bold">Activo</span>
