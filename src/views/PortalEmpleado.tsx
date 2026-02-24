@@ -1,306 +1,263 @@
-import { type FC, useState, useEffect, useMemo, useCallback } from 'react';
-import { Calendar, FileText, MapPin, Clock, LogIn, LogOut, CheckCircle2, HelpCircle, Loader2, Shield, AlertTriangle, X, Target, Navigation } from 'lucide-react';
+import { type FC, useState, useEffect } from 'react';
+import { Calendar, FileText, MapPin, Clock, LogIn, LogOut, CheckCircle2, ChevronRight, HelpCircle, AlertTriangle, X, Target } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
-// Haversine formula — distance in meters between two lat/lng
-const haversine = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+// Formula de Haversine para distancia en metros
+function getDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
     const R = 6371e3;
-    const toRad = (d: number) => (d * Math.PI) / 180;
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-};
-
-const GEOFENCE_RADIUS = 500; // meters
+    const p1 = lat1 * Math.PI / 180;
+    const p2 = lat2 * Math.PI / 180;
+    const dp = (lat2 - lat1) * Math.PI / 180;
+    const dl = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dp / 2) * Math.sin(dp / 2) +
+        Math.cos(p1) * Math.cos(p2) *
+        Math.sin(dl / 2) * Math.sin(dl / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
 
 const PortalEmpleado: FC = () => {
     const { user } = useAuth();
     const [employee, setEmployee] = useState<any>(null);
-    const [activeTab, setActiveTab] = useState<'inicio' | 'turnos' | 'recibos' | 'historial'>('inicio');
+    const [activeTab, setActiveTab] = useState<'inicio' | 'turnos' | 'recibos' | 'ausencias' | 'prestamos' | 'historial'>('inicio');
     const [isLoading, setIsLoading] = useState(true);
 
-    // Attendance
-    const [todayLog, setTodayLog] = useState<any>(null);
-    const [geoStatus, setGeoStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-    const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number } | null>(null);
-    const [distanceToPost, setDistanceToPost] = useState<number | null>(null);
-    const [isInsideGeofence, setIsInsideGeofence] = useState(false);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [attendanceLogs, setAttendanceLogs] = useState<any[]>([]);
+    const [currentAttendance, setCurrentAttendance] = useState<any>(null);
+    const [weaponInfo, setWeaponInfo] = useState<any>(null);
 
-    // Weapon handover modal
+    // UI states
+    const [clockError, setClockError] = useState<string | null>(null);
+    const [clockSuccess, setClockSuccess] = useState<string | null>(null);
+    const [isClocking, setIsClocking] = useState(false);
+
+    // Weapon Modal
     const [showWeaponModal, setShowWeaponModal] = useState(false);
-    const [weaponAction, setWeaponAction] = useState<'CHECKIN' | 'CHECKOUT'>('CHECKIN');
-    const [assignedWeapon, setAssignedWeapon] = useState<any>(null);
-    const [ammoExpected, setAmmoExpected] = useState(0);
-    const [ammoActual, setAmmoActual] = useState('');
-    const [ammoNotes, setAmmoNotes] = useState('');
-    const [outgoingGuardName, setOutgoingGuardName] = useState('');
+    const [actualAmmo, setActualAmmo] = useState<number>(0);
+    const [handoverComments, setHandoverComments] = useState('');
+    const [pendingClockInData, setPendingClockInData] = useState<any>(null);
 
-    // Shifts, payslips
-    const [shifts, setShifts] = useState<any[]>([]);
-    const [payslips, setPayslips] = useState<any[]>([]);
-
-    // Post info
-    const [assignedPost, setAssignedPost] = useState<any>(null);
-
-    // Live clock
-    const [now, setNow] = useState(new Date());
-    useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
-
-    const fetchData = useCallback(async () => {
-        if (!user) return;
-        setIsLoading(true);
-        try {
-            // Get guard linked to this auth user
-            const { data: guard } = await supabase
-                .from('guards')
-                .select('*, posts:current_post_id(id, name, address, lat, lng, latitude, longitude)')
-                .eq('user_id', user.id)
-                .single();
-
-            if (!guard) {
-                // Fallback: get first guard (for demo)
-                const { data: fallback } = await supabase
-                    .from('guards')
-                    .select('*, posts:current_post_id(id, name, address, lat, lng, latitude, longitude)')
-                    .limit(1)
-                    .single();
-                if (fallback) {
-                    setEmployee(fallback);
-                    setAssignedPost(fallback.posts);
-                }
-            } else {
-                setEmployee(guard);
-                setAssignedPost(guard.posts);
-            }
-
-            const guardId = guard?.id || (await supabase.from('guards').select('id').limit(1).single()).data?.id;
-            if (!guardId) return;
-
-            // Today's attendance
-            const today = new Date().toISOString().split('T')[0];
-            const { data: todayAtt } = await supabase
-                .from('attendance_logs')
-                .select('*')
-                .eq('guard_id', guardId)
-                .gte('check_in', today + 'T00:00:00')
-                .order('check_in', { ascending: false })
-                .limit(1)
-                .single();
-            setTodayLog(todayAtt);
-
-            // Attendance history
-            const { data: logs } = await supabase
-                .from('attendance_logs')
-                .select('*, posts:post_id(name)')
-                .eq('guard_id', guardId)
-                .order('check_in', { ascending: false })
-                .limit(30);
-            setAttendanceLogs(logs || []);
-
-            // Weapon assigned to this guard
-            const { data: weapon } = await supabase
-                .from('weapons')
-                .select('*')
-                .eq('assigned_to', guardId)
-                .limit(1)
-                .single();
-            setAssignedWeapon(weapon);
-            if (weapon) setAmmoExpected(weapon.ammo_count || 0);
-
-            // Shifts
-            const { data: sh } = await supabase
-                .from('shifts')
-                .select('*, posts:post_id(name), clients:client_id(name)')
-                .eq('guard_id', guardId)
-                .gte('date', today)
-                .order('date', { ascending: true })
-                .limit(10);
-            setShifts(sh || []);
-
-            // Payslips
-            const { data: ps } = await supabase
-                .from('payslips')
-                .select('*')
-                .eq('guard_id', guardId)
-                .order('period_year', { ascending: false })
-                .order('period_month', { ascending: false })
-                .limit(12);
-            setPayslips(ps || []);
-
-        } catch (e) { console.error(e); }
-        finally { setIsLoading(false); }
+    useEffect(() => {
+        if (user) {
+            fetchEmployeeProfile();
+        }
     }, [user]);
 
-    useEffect(() => { fetchData(); }, [fetchData]);
-
-    // Geolocation
-    const getLocation = (): Promise<GeolocationPosition> =>
-        new Promise((resolve, reject) => {
-            if (!navigator.geolocation) return reject(new Error('Geolocalización no soportada'));
-            navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000 });
-        });
-
-    const requestGeolocation = async () => {
-        setGeoStatus('loading');
+    const fetchEmployeeProfile = async () => {
+        setIsLoading(true);
         try {
-            const pos = await getLocation();
-            const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-            setCurrentCoords(coords);
+            const { data: guardData } = await supabase
+                .from('guards')
+                .select('*, posts(id, name, address, lat, lng)')
+                .limit(1)
+                .single();
 
-            // Calculate distance to assigned post
-            const postLat = assignedPost?.lat || assignedPost?.latitude;
-            const postLng = assignedPost?.lng || assignedPost?.longitude;
-            if (postLat && postLng) {
-                const dist = haversine(coords.lat, coords.lng, Number(postLat), Number(postLng));
-                setDistanceToPost(Math.round(dist));
-                setIsInsideGeofence(dist <= GEOFENCE_RADIUS);
-            } else {
-                setDistanceToPost(null);
-                setIsInsideGeofence(true); // No post coords → allow
+            if (guardData) {
+                setEmployee(guardData);
+
+                // Fetch Today's Attendance
+                const today = new Date().toISOString().split('T')[0];
+                const { data: attData } = await supabase
+                    .from('attendance_logs')
+                    .select('*')
+                    .eq('guard_id', guardData.id)
+                    .eq('date', today)
+                    .is('time_out', null)
+                    .maybeSingle();
+
+                if (attData) {
+                    setCurrentAttendance(attData);
+                }
+
+                // Fetch Post's Weapon for Handover logic
+                if (guardData.post_id) {
+                    const { data: wData } = await supabase
+                        .from('weapons')
+                        .select('*')
+                        .eq('assigned_post_id', guardData.post_id)
+                        .maybeSingle();
+
+                    if (wData) {
+                        setWeaponInfo(wData);
+                        setActualAmmo(wData.ammo_count || 0);
+                    }
+                }
             }
-            setGeoStatus('success');
-        } catch {
-            setGeoStatus('error');
+        } catch (error) {
+            console.error("Error fetching profile", error);
+        } finally {
+            setIsLoading(false);
         }
     };
 
-    // Check In flow
-    const handleCheckIn = async () => {
-        if (!currentCoords || !employee) return;
-        // If guard has a weapon, show weapon verification first
-        if (assignedWeapon) {
-            setWeaponAction('CHECKIN');
-            setAmmoActual(String(ammoExpected));
-            setAmmoNotes('');
-            setOutgoingGuardName('');
+    const handleClockInCoords = (coords: { latitude: number; longitude: number }) => {
+        if (!employee) return;
+
+        let statusIn = 'ON_TIME';
+
+        // Check Geofence if Post has coordinates
+        if (employee.posts && employee.posts.lat && employee.posts.lng) {
+            const distance = getDistance(coords.latitude, coords.longitude, employee.posts.lat, employee.posts.lng);
+            if (distance > 300) { // More than 300 meters away
+                setClockError(`Cuidado: Estás a ${Math.round(distance)}m de tu puesto asignado. La marcación quedará flaggeada como Fuera de Rango.`);
+                statusIn = 'OUT_OF_RANGE';
+            }
+        }
+
+        const clockData = {
+            guard_id: employee.id,
+            post_id: employee.post_id,
+            date: new Date().toISOString().split('T')[0],
+            time_in: new Date().toLocaleTimeString('en-US', { hour12: false }),
+            lat_in: coords.latitude,
+            lng_in: coords.longitude,
+            status_in: statusIn
+        };
+
+        if (weaponInfo && !currentAttendance) {
+            // Need Handover
+            setPendingClockInData(clockData);
             setShowWeaponModal(true);
+            setIsClocking(false);
         } else {
-            await executeCheckIn();
+            // Straight clock IN
+            executeClockIn(clockData);
         }
     };
 
-    const executeCheckIn = async () => {
-        if (!currentCoords || !employee) return;
-        setIsSubmitting(true);
+    const executeClockIn = async (clockData: any, weaponHandover?: any) => {
+        setIsClocking(true);
+        setClockError(null);
         try {
-            const { error } = await supabase.from('attendance_logs').insert({
-                guard_id: employee.id,
-                post_id: assignedPost?.id || employee.current_post_id,
-                check_in: new Date().toISOString(),
-                check_in_lat: currentCoords.lat,
-                check_in_lng: currentCoords.lng,
-                inside_geofence: isInsideGeofence,
-                type: 'REGULAR',
-                status: isInsideGeofence ? 'CONFIRMED' : 'FLAGGED',
-            });
-            if (error) throw error;
-            await fetchData();
-            setGeoStatus('idle');
-        } catch (e) { console.error(e); alert('Error al marcar entrada'); }
-        finally { setIsSubmitting(false); }
-    };
+            // 1. Insert Attendance
+            const { data: attRes, error: attError } = await supabase
+                .from('attendance_logs')
+                .insert([clockData])
+                .select()
+                .single();
 
-    // Check Out flow
-    const handleCheckOut = async () => {
-        if (!currentCoords || !employee || !todayLog) return;
-        if (assignedWeapon) {
-            setWeaponAction('CHECKOUT');
-            setAmmoActual(String(ammoExpected));
-            setAmmoNotes('');
-            setShowWeaponModal(true);
-        } else {
-            await executeCheckOut();
-        }
-    };
+            if (attError) throw attError;
 
-    const executeCheckOut = async () => {
-        if (!currentCoords || !employee || !todayLog) return;
-        setIsSubmitting(true);
-        try {
-            const { error } = await supabase.from('attendance_logs').update({
-                check_out: new Date().toISOString(),
-                check_out_lat: currentCoords.lat,
-                check_out_lng: currentCoords.lng,
-            }).eq('id', todayLog.id);
-            if (error) throw error;
-            await fetchData();
-            setGeoStatus('idle');
-        } catch (e) { console.error(e); alert('Error al marcar salida'); }
-        finally { setIsSubmitting(false); }
-    };
-
-    // Weapon handover confirmation
-    const handleWeaponConfirm = async () => {
-        if (!assignedWeapon || !employee) return;
-        setIsSubmitting(true);
-        try {
-            const ammoNum = parseInt(ammoActual) || 0;
-            const needsNotes = ammoNum < ammoExpected;
-
-            if (needsNotes && !ammoNotes.trim()) {
-                alert('Debes indicar la razón por la que hay menos municiones.');
-                setIsSubmitting(false);
-                return;
+            // 2. Insert Handover if applicable
+            if (weaponHandover) {
+                const { error: wError } = await supabase
+                    .from('weapon_handovers')
+                    .insert([{
+                        weapon_id: weaponHandover.weapon_id,
+                        post_id: employee.post_id,
+                        receiving_guard_id: employee.id,
+                        expected_ammo: weaponHandover.expected_ammo,
+                        actual_ammo: weaponHandover.actual_ammo,
+                        comments: weaponHandover.comments,
+                        status: (weaponHandover.actual_ammo < weaponHandover.expected_ammo) ? 'MISSING_AMMO' : 'OK'
+                    }]);
+                if (wError) console.error("Handover log error:", wError);
             }
 
-            // Log weapon handover
-            await supabase.from('weapon_logs').insert({
-                weapon_id: assignedWeapon.id,
-                guard_id: employee.id,
-                post_id: assignedPost?.id || employee.current_post_id,
-                action: weaponAction,
-                ammo_received: weaponAction === 'CHECKIN' ? ammoNum : null,
-                ammo_delivered: weaponAction === 'CHECKOUT' ? ammoNum : null,
-                notes: [
-                    outgoingGuardName ? `Guardia saliente: ${outgoingGuardName}` : '',
-                    ammoNotes ? `Observación munición: ${ammoNotes}` : '',
-                ].filter(Boolean).join(' | ') || null,
-            });
-
-            // Update weapon ammo count
-            await supabase.from('weapons').update({ ammo_count: ammoNum }).eq('id', assignedWeapon.id);
-
+            setCurrentAttendance(attRes);
+            setClockSuccess(`Marcación Exitosa: ¡Entrada registrada a las ${clockData.time_in}!`);
             setShowWeaponModal(false);
 
-            // Continue with check-in or check-out
-            if (weaponAction === 'CHECKIN') {
-                await executeCheckIn();
-            } else {
-                await executeCheckOut();
-            }
-        } catch (e) { console.error(e); alert('Error al registrar armamento'); }
-        finally { setIsSubmitting(false); }
+            setTimeout(() => setClockSuccess(null), 5000);
+        } catch (error: any) {
+            setClockError(error.message || "Error guardando asistencia");
+        } finally {
+            setIsClocking(false);
+        }
     };
 
-    // Computed
-    const ammoDiff = useMemo(() => {
-        const actual = parseInt(ammoActual) || 0;
-        return actual - ammoExpected;
-    }, [ammoActual, ammoExpected]);
+    const handleClockInRequest = () => {
+        setIsClocking(true);
+        setClockError(null);
+        setClockSuccess(null);
 
-    const hasCheckedIn = !!todayLog && !todayLog.check_out;
-    const hasCompleted = !!todayLog?.check_out;
+        if ("geolocation" in navigator) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    handleClockInCoords(position.coords);
+                },
+                () => {
+                    setIsClocking(false);
+                    setClockError("Error obteniendo ubicación. Asegúrate de dar permisos de GPS. Marcación denegada.");
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        } else {
+            setIsClocking(false);
+            setClockError("Geolocalización no soportada en este dispositivo.");
+        }
+    };
 
-    const formatTime = (d: string) => new Date(d).toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' });
-    const formatDate = (d: string) => new Date(d).toLocaleDateString('es-PY', { day: '2-digit', month: 'short', year: 'numeric' });
-    const formatCurrency = (n: number) => new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', maximumFractionDigits: 0 }).format(n);
+    const handleClockOutRequest = () => {
+        if (!currentAttendance) return;
+        setIsClocking(true);
+        setClockError(null);
 
-    const tabCls = (t: string) => `flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === t ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300 hover:bg-slate-800/50'}`;
+        if ("geolocation" in navigator) {
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const coords = position.coords;
+                    let statusOut = 'ON_TIME';
 
-    if (isLoading) return <div className="flex h-[80vh] items-center justify-center text-slate-500"><Loader2 className="animate-spin mr-2" /> Cargando tu portal...</div>;
-    if (!employee) return <div className="flex h-[80vh] items-center justify-center text-slate-500">Perfil de empleado no encontrado.</div>;
+                    if (employee.posts && employee.posts.lat && employee.posts.lng) {
+                        const distance = getDistance(coords.latitude, coords.longitude, employee.posts.lat, employee.posts.lng);
+                        if (distance > 300) {
+                            statusOut = 'OUT_OF_RANGE';
+                        }
+                    }
+
+                    try {
+                        const timeOut = new Date().toLocaleTimeString('en-US', { hour12: false });
+                        const { error } = await supabase
+                            .from('attendance_logs')
+                            .update({
+                                time_out: timeOut,
+                                lat_out: coords.latitude,
+                                lng_out: coords.longitude,
+                                status_out: statusOut
+                            })
+                            .eq('id', currentAttendance.id);
+
+                        if (error) throw error;
+
+                        setCurrentAttendance(null);
+                        setClockSuccess(`Salida Registrada exitosamente a las ${timeOut}.`);
+                        setTimeout(() => setClockSuccess(null), 5000);
+                    } catch (error: any) {
+                        setClockError(error.message || "Error al registrar salida");
+                    } finally {
+                        setIsClocking(false);
+                    }
+                },
+                () => {
+                    setIsClocking(false);
+                    setClockError("Error obteniendo ubicación. Marcación denegada.");
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        } else {
+            setIsClocking(false);
+            setClockError("Geolocalización no soportada.");
+        }
+    };
+
+    if (isLoading) {
+        return <div className="flex h-[80vh] items-center justify-center text-slate-500">Cargando tu portal...</div>;
+    }
+
+    if (!employee) {
+        return <div className="flex h-[80vh] items-center justify-center text-slate-500">Perfil de empleado no encontrado.</div>;
+    }
 
     return (
         <div className="animate-in fade-in duration-500 space-y-6 max-w-5xl mx-auto pb-10">
-            {/* Header */}
+            {/* Header section */}
             <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-2">
                 <div>
                     <h2 className="text-3xl font-bold text-white font-grotesk tracking-tight">Hola, {employee.first_name} 👋</h2>
-                    <p className="text-slate-400 mt-1 max-w-xl">Portal de autogestión — marca tu asistencia, verifica armamento y consulta tus turnos.</p>
+                    <p className="text-slate-400 mt-1 max-w-xl">
+                        Bienvenido a tu portal de autogestión. Aquí puedes marcar tu entrada, revisar turnos y descargar recibos.
+                    </p>
                 </div>
                 <div className="flex bg-slate-800/60 rounded-full px-4 py-2 border border-slate-700/50 items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -308,120 +265,126 @@ const PortalEmpleado: FC = () => {
                 </div>
             </header>
 
-            {/* Attendance Widget */}
-            <div className="glassmorphism p-6 rounded-3xl bg-gradient-to-br from-primary/10 to-slate-900 border-primary/20 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-primary/20 rounded-full blur-3xl -mr-20 -mt-20"></div>
+            {/* Error & Success Messages */}
+            {clockError && (
+                <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-xl flex items-start gap-3 text-red-400">
+                    <AlertTriangle className="shrink-0 mt-0.5" size={18} />
+                    <p className="text-sm font-medium">{clockError}</p>
+                </div>
+            )}
+
+            {clockSuccess && (
+                <div className="bg-emerald-500/10 border border-emerald-500/50 p-4 rounded-xl flex items-start gap-3 text-emerald-400">
+                    <CheckCircle2 className="shrink-0 mt-0.5" size={18} />
+                    <p className="text-sm font-medium">{clockSuccess}</p>
+                </div>
+            )}
+
+            {/* Marcación Rápida Widget */}
+            <div className={`glassmorphism p-6 rounded-3xl bg-gradient-to-br ${currentAttendance ? 'from-slate-800 to-slate-900 border-slate-700' : 'from-primary/10 to-slate-900 border-primary/20'} relative overflow-hidden transition-all duration-500`}>
+                <div className={`absolute top-0 right-0 w-64 h-64 ${currentAttendance ? 'bg-slate-700/20' : 'bg-primary/20'} rounded-full blur-3xl -mr-20 -mt-20`}></div>
+
                 <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
                     <div>
-                        <div className="flex items-center gap-2 text-primary font-bold tracking-wider uppercase mb-2 text-sm">
+                        <div className={`flex items-center gap-2 font-bold tracking-wider uppercase mb-2 text-sm ${currentAttendance ? 'text-slate-400' : 'text-primary'}`}>
                             <Clock size={16} /> Marcación de Horario
                         </div>
-                        <h3 className="text-4xl text-white font-bold font-mono tracking-tighter mb-1">
-                            {now.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        <h3 className="text-4xl text-white font-bold font-mono tracking-tighter mb-4">
+                            {new Date().toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' })}
                         </h3>
-                        <p className="text-xs text-slate-500 mb-4">{now.toLocaleDateString('es-PY', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                        <p className="text-sm text-slate-400 mb-6 flex items-start gap-2 max-w-md">
+                            <MapPin size={16} className="shrink-0 mt-0.5" />
+                            Tu ubicación actual será verificada con el objetivo {employee.posts?.name ? `(${employee.posts.name})` : ''} mediante GPS.
+                        </p>
 
-                        {/* Geolocation status */}
-                        {geoStatus === 'idle' && !hasCompleted && (
-                            <button onClick={requestGeolocation} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 transition-all mb-3">
-                                <Navigation size={18} /> Obtener mi Ubicación
-                            </button>
-                        )}
-
-                        {geoStatus === 'loading' && (
-                            <div className="flex items-center gap-2 text-blue-400 mb-3">
-                                <Loader2 size={18} className="animate-spin" /> Obteniendo ubicación GPS...
-                            </div>
-                        )}
-
-                        {geoStatus === 'error' && (
-                            <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-3 rounded-xl text-sm mb-3 flex items-center gap-2">
-                                <AlertTriangle size={16} /> Error al obtener ubicación. Verifica los permisos del navegador.
-                                <button onClick={requestGeolocation} className="underline ml-2">Reintentar</button>
-                            </div>
-                        )}
-
-                        {geoStatus === 'success' && currentCoords && (
-                            <div className="mb-4 space-y-2">
-                                <div className={`p-3 rounded-xl text-sm flex items-center gap-2 border ${isInsideGeofence ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-orange-500/10 border-orange-500/30 text-orange-400'}`}>
-                                    <Target size={16} />
-                                    {distanceToPost !== null ? (
-                                        <span>Distancia al puesto: <strong>{distanceToPost}m</strong> {isInsideGeofence ? '✓ Dentro del perímetro' : `⚠ Fuera del perímetro (máx ${GEOFENCE_RADIUS}m)`}</span>
-                                    ) : (
-                                        <span>Ubicación capturada: {currentCoords.lat.toFixed(4)}, {currentCoords.lng.toFixed(4)}</span>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Action buttons */}
-                        {geoStatus === 'success' && (
-                            <div className="flex flex-wrap gap-4">
-                                {!hasCheckedIn && !hasCompleted && (
-                                    <button onClick={handleCheckIn} disabled={isSubmitting} className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]">
-                                        {isSubmitting ? <Loader2 size={20} className="animate-spin" /> : <LogIn size={20} />} Marcar Entrada
-                                    </button>
-                                )}
-                                {hasCheckedIn && (
-                                    <button onClick={handleCheckOut} disabled={isSubmitting} className="bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-[0_0_20px_rgba(249,115,22,0.3)]">
-                                        {isSubmitting ? <Loader2 size={20} className="animate-spin" /> : <LogOut size={20} />} Marcar Salida
-                                    </button>
-                                )}
-                                {hasCompleted && (
-                                    <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-6 py-3 rounded-xl font-bold flex items-center gap-2">
-                                        <CheckCircle2 size={20} /> Turno completado hoy
-                                    </div>
-                                )}
-                            </div>
-                        )}
+                        <div className="flex flex-wrap gap-4">
+                            {!currentAttendance ? (
+                                <button
+                                    onClick={handleClockInRequest}
+                                    disabled={isClocking}
+                                    className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+                                    <LogIn size={20} /> {isClocking ? 'Procesando...' : 'Marcar Entrada'}
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={handleClockOutRequest}
+                                    disabled={isClocking}
+                                    className="bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-[0_0_20px_rgba(239,68,68,0.3)]">
+                                    <LogOut size={20} /> {isClocking ? 'Procesando...' : 'Marcar Salida'}
+                                </button>
+                            )}
+                        </div>
                     </div>
 
-                    {/* Right side — post & status */}
                     <div className="bg-slate-900/60 p-5 rounded-2xl border border-slate-800 backdrop-blur-sm self-stretch flex flex-col justify-center">
-                        <h4 className="text-slate-300 font-medium mb-3 text-sm">Tu Puesto Asignado</h4>
-                        {assignedPost ? (
-                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50 space-y-2">
-                                <div className="flex justify-between items-center">
-                                    <span className="text-white font-bold">{assignedPost.name}</span>
-                                    <span className="bg-emerald-500/20 text-emerald-400 text-xs px-2 py-0.5 rounded font-bold">Asignado</span>
-                                </div>
-                                {assignedPost.address && (
-                                    <div className="text-sm text-slate-400 flex items-center gap-1.5">
-                                        <MapPin size={14} /> {assignedPost.address}
-                                    </div>
+                        <h4 className="text-slate-300 font-medium mb-3 text-sm">Tu Turno Actual / Próximo</h4>
+                        <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                            <div className="flex justify-between items-center mb-2">
+                                <span className="text-white font-bold">
+                                    {currentAttendance ? `Marcaste entrada: ${currentAttendance.time_in?.substring(0, 5)}` : 'Turno Regular'}
+                                </span>
+                                {currentAttendance ? (
+                                    <span className="bg-emerald-500/20 text-emerald-400 text-xs px-2 py-0.5 rounded font-bold">Activo</span>
+                                ) : (
+                                    <span className="bg-slate-500/20 text-slate-400 text-xs px-2 py-0.5 rounded font-bold">Pendiente</span>
                                 )}
                             </div>
-                        ) : (
-                            <div className="text-slate-500 text-sm">Sin puesto asignado actualmente.</div>
-                        )}
-
-                        {todayLog && (
-                            <div className="mt-3 text-xs text-slate-400 space-y-1">
-                                <div className="flex items-center gap-1"><LogIn size={12} className="text-emerald-400" /> Entrada: {formatTime(todayLog.check_in)}</div>
-                                {todayLog.check_out && <div className="flex items-center gap-1"><LogOut size={12} className="text-orange-400" /> Salida: {formatTime(todayLog.check_out)}</div>}
+                            <div className="text-sm text-slate-400 flex items-center gap-1.5 mt-2 pt-2 border-t border-slate-700/50">
+                                <MapPin size={14} className="text-primary" />
+                                {employee.posts ? employee.posts.name : 'Sin puesto asignado'}
                             </div>
-                        )}
-
-                        {assignedWeapon && (
-                            <div className="mt-3 bg-red-500/5 border border-red-500/20 rounded-lg p-3">
-                                <div className="text-xs text-red-400 font-bold flex items-center gap-1"><Shield size={12} /> Armamento Asignado</div>
-                                <div className="text-sm text-white mt-1">{assignedWeapon.type} — {assignedWeapon.serial_number}</div>
-                                <div className="text-xs text-slate-400">{assignedWeapon.brand} {assignedWeapon.model} | Cal. {assignedWeapon.caliber} | Municiones: {assignedWeapon.ammo_count || 0}</div>
-                            </div>
-                        )}
+                            {weaponInfo && (
+                                <div className="text-sm text-slate-400 flex items-center gap-1.5 mt-1">
+                                    <Target size={14} className="text-orange-400" />
+                                    Arma Asignada: {weaponInfo.brand} {weaponInfo.model}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
 
-            {/* Tabs */}
+            {/* Navigation Tabs */}
             <div className="flex space-x-1 bg-slate-900/50 p-1 rounded-xl border border-slate-700/50 overflow-x-auto custom-scrollbar">
-                <button onClick={() => setActiveTab('inicio')} className={tabCls('inicio')}>Resumen</button>
-                <button onClick={() => setActiveTab('turnos')} className={tabCls('turnos')}>Mis Turnos</button>
-                <button onClick={() => setActiveTab('recibos')} className={tabCls('recibos')}>Mis Recibos</button>
-                <button onClick={() => setActiveTab('historial')} className={tabCls('historial')}>Historial Asistencia</button>
+                <button
+                    onClick={() => setActiveTab('inicio')}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'inicio' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300 hover:bg-slate-800/50'}`}
+                >
+                    Resumen
+                </button>
+                <button
+                    onClick={() => setActiveTab('turnos')}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'turnos' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300 hover:bg-slate-800/50'}`}
+                >
+                    Mis Turnos
+                </button>
+                <button
+                    onClick={() => setActiveTab('recibos')}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'recibos' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300 hover:bg-slate-800/50'}`}
+                >
+                    Mis Recibos
+                </button>
+                <button
+                    onClick={() => setActiveTab('ausencias')}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'ausencias' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300 hover:bg-slate-800/50'}`}
+                >
+                    Vacaciones / Reposos
+                </button>
+                <button
+                    onClick={() => setActiveTab('prestamos')}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'prestamos' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300 hover:bg-slate-800/50'}`}
+                >
+                    Préstamos
+                </button>
+                <button
+                    onClick={() => setActiveTab('historial')}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'historial' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300 hover:bg-slate-800/50'}`}
+                >
+                    Mi Historial
+                </button>
             </div>
 
-            {/* Tab: Resumen */}
+            {/* Main Content Areas */}
             {activeTab === 'inicio' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="glassmorphism p-6 rounded-2xl">
@@ -431,204 +394,169 @@ const PortalEmpleado: FC = () => {
                         <ul className="space-y-4 text-sm text-slate-300">
                             <li className="flex gap-3">
                                 <div className="mt-0.5 text-primary"><CheckCircle2 size={16} /></div>
-                                <div>Al marcar entrada, tu ubicación GPS se compara con las coordenadas del puesto asignado.</div>
+                                <div>Asegúrate de conceder permisos de ubicación a tu navegador para registrar la asistencia correctamente.</div>
                             </li>
                             <li className="flex gap-3">
                                 <div className="mt-0.5 text-primary"><CheckCircle2 size={16} /></div>
-                                <div>Si tenés armamento asignado, un modal de verificación aparecerá al iniciar/finalizar turno.</div>
+                                <div>Los recibos de salario se generan los días 05 de cada mes. Las quincenas los días 20.</div>
                             </li>
                             <li className="flex gap-3">
                                 <div className="mt-0.5 text-primary"><CheckCircle2 size={16} /></div>
-                                <div>Los recibos de salario se generan los días 05 de cada mes.</div>
+                                <div>Puedes solicitar Préstamos o Adelantos que se descontarán automáticamente de tu recibo mensual.</div>
                             </li>
                         </ul>
                     </div>
 
-                    <div className="glassmorphism p-6 rounded-2xl">
+                    <div className="glassmorphism p-6 rounded-2xl flex flex-col">
                         <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
                             <FileText className="text-primary" size={20} /> Último Recibo
                         </h3>
-                        {payslips.length > 0 ? (
-                            <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-700/50">
-                                <h4 className="text-white font-medium">Liquidación — {payslips[0].period_month}/{payslips[0].period_year}</h4>
-                                <p className="text-slate-400 text-xs mt-1 mb-2">Neto: {formatCurrency(payslips[0].net_pay || 0)}</p>
-                                <span className={`text-xs px-2 py-0.5 rounded font-bold ${payslips[0].status === 'PAID' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                                    {payslips[0].status === 'PAID' ? 'Pagado' : 'Borrador'}
-                                </span>
-                            </div>
-                        ) : (
-                            <div className="text-center py-8 text-slate-500 border border-dashed border-slate-700 rounded-xl">
-                                <FileText size={32} className="mx-auto mb-2 opacity-30" />
-                                <p className="text-sm">No hay recibos disponibles aún.</p>
-                            </div>
-                        )}
+                        <div className="flex-1 flex flex-col justify-center items-center text-center p-6 bg-slate-900/50 rounded-xl border border-slate-700/50 hover:border-primary/50 transition-colors cursor-pointer group">
+                            <FileText size={32} className="text-slate-500 group-hover:text-primary transition-colors mb-2" />
+                            <h4 className="text-white font-medium">Liquidación - Octubre 2024</h4>
+                            <p className="text-slate-400 text-xs mt-1 mb-4">G. 2.700.000 neto (Generado el 05/11/2024)</p>
+                            <span className="text-primary text-sm font-medium flex items-center gap-1 group-hover:gap-2 transition-all">
+                                Descargar PDF <ChevronRight size={16} />
+                            </span>
+                        </div>
                     </div>
                 </div>
             )}
 
-            {/* Tab: Turnos */}
             {activeTab === 'turnos' && (
                 <div className="glassmorphism p-6 rounded-2xl">
                     <h3 className="text-lg font-bold text-white mb-6">Mis Próximos Turnos</h3>
-                    {shifts.length > 0 ? (
-                        <div className="space-y-3">
-                            {shifts.map(s => (
-                                <div key={s.id} className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50 flex justify-between items-center">
-                                    <div>
-                                        <div className="text-white font-medium">{formatDate(s.date)} — {s.start_time?.slice(0, 5)} a {s.end_time?.slice(0, 5)}</div>
-                                        <div className="text-sm text-slate-400 flex items-center gap-1 mt-1">
-                                            <MapPin size={14} /> {s.posts?.name || 'Sin puesto'} {s.clients?.name ? `• ${s.clients.name}` : ''}
-                                        </div>
-                                    </div>
-                                    <span className={`text-xs px-2 py-0.5 rounded font-bold ${s.status === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400' : s.status === 'IN_PROGRESS' ? 'bg-blue-500/20 text-blue-400' : s.status === 'MISSED' ? 'bg-red-500/20 text-red-400' : 'bg-slate-500/20 text-slate-400'}`}>
-                                        {s.status === 'SCHEDULED' ? 'Programado' : s.status === 'IN_PROGRESS' ? 'En Curso' : s.status === 'COMPLETED' ? 'Completado' : 'Perdido'}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded-xl">
-                            <Calendar size={48} className="mx-auto mb-4 opacity-30" />
-                            <p>No tienes turnos programados a futuro.</p>
-                        </div>
-                    )}
+                    <div className="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                        <Calendar size={48} className="mx-auto mb-4 opacity-30" />
+                        <p>No tienes turnos programados a futuro.</p>
+                    </div>
                 </div>
             )}
 
-            {/* Tab: Recibos */}
             {activeTab === 'recibos' && (
                 <div className="glassmorphism p-6 rounded-2xl">
                     <h3 className="text-lg font-bold text-white mb-6">Mis Recibos y Liquidaciones</h3>
-                    {payslips.length > 0 ? (
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left text-sm">
-                                <thead><tr className="text-slate-400 border-b border-slate-700">
-                                    <th className="pb-2">Período</th><th className="pb-2">Salario Base</th><th className="pb-2">Bonif.</th><th className="pb-2">Desc.</th><th className="pb-2">Neto</th><th className="pb-2">Estado</th>
-                                </tr></thead>
-                                <tbody>
-                                    {payslips.map(p => (
-                                        <tr key={p.id} className="border-b border-slate-800 text-slate-300">
-                                            <td className="py-3 text-white font-medium">{p.period_month}/{p.period_year}</td>
-                                            <td>{formatCurrency(p.base_salary_pro_rated || 0)}</td>
-                                            <td className="text-emerald-400">{formatCurrency(p.bonuses_total || 0)}</td>
-                                            <td className="text-red-400">-{formatCurrency(p.discounts_total || 0)}</td>
-                                            <td className="text-white font-bold">{formatCurrency(p.net_pay || 0)}</td>
-                                            <td><span className={`text-xs px-2 py-0.5 rounded font-bold ${p.status === 'PAID' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{p.status === 'PAID' ? 'Pagado' : 'Borrador'}</span></td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    ) : (
-                        <div className="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded-xl">
-                            <FileText size={48} className="mx-auto mb-4 opacity-30" />
-                            <p>No hay recibos disponibles.</p>
-                        </div>
-                    )}
+                    <div className="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                        <FileText size={48} className="mx-auto mb-4 opacity-30" />
+                        <p>No hay recibos disponibles aún.</p>
+                    </div>
                 </div>
             )}
 
-            {/* Tab: Historial */}
+            {activeTab === 'ausencias' && (
+                <div className="glassmorphism p-6 rounded-2xl">
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-lg font-bold text-white">Mis Solicitudes</h3>
+                        <button className="bg-primary/20 text-primary hover:bg-primary/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                            Nueva Solicitud
+                        </button>
+                    </div>
+                    <div className="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                        <HelpCircle size={48} className="mx-auto mb-4 opacity-30" />
+                        <p className="mb-2">Aún no has solicitado vacaciones o reposos.</p>
+                        <p className="text-xs">Usa el botón superior para crear una solicitud.</p>
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'prestamos' && (
+                <div className="glassmorphism p-6 rounded-2xl">
+                    <h3 className="text-lg font-bold text-white mb-6">Mis Adelantos y Préstamos</h3>
+                    <div className="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                        <FileText size={48} className="mx-auto mb-4 opacity-30" />
+                        <p>No tienes préstamos o adelantos activos.</p>
+                    </div>
+                </div>
+            )}
+
             {activeTab === 'historial' && (
                 <div className="glassmorphism p-6 rounded-2xl">
-                    <h3 className="text-lg font-bold text-white mb-6">Historial de Asistencia (últimos 30)</h3>
-                    {attendanceLogs.length > 0 ? (
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left text-sm">
-                                <thead><tr className="text-slate-400 border-b border-slate-700">
-                                    <th className="pb-2">Fecha</th><th className="pb-2">Entrada</th><th className="pb-2">Salida</th><th className="pb-2">Puesto</th><th className="pb-2">Geofence</th>
-                                </tr></thead>
-                                <tbody>
-                                    {attendanceLogs.map(log => (
-                                        <tr key={log.id} className="border-b border-slate-800 text-slate-300">
-                                            <td className="py-3 text-white">{formatDate(log.check_in)}</td>
-                                            <td>{formatTime(log.check_in)}</td>
-                                            <td>{log.check_out ? formatTime(log.check_out) : <span className="text-yellow-400">—</span>}</td>
-                                            <td>{log.posts?.name || '—'}</td>
-                                            <td>
-                                                {log.inside_geofence ? (
-                                                    <span className="text-emerald-400 text-xs font-bold">✓ Dentro</span>
-                                                ) : (
-                                                    <span className="text-orange-400 text-xs font-bold">⚠ Fuera</span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    ) : (
-                        <div className="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded-xl">
-                            <CheckCircle2 size={48} className="mx-auto mb-4 opacity-30 text-emerald-500/50" />
-                            <p>No hay registros de asistencia aún.</p>
-                        </div>
-                    )}
+                    <h3 className="text-lg font-bold text-white mb-6">Historial de Desempeño y Disciplina</h3>
+                    <div className="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                        <CheckCircle2 size={48} className="mx-auto mb-4 opacity-30 text-emerald-500/50" />
+                        <p className="mb-2 text-emerald-400/80 font-medium">¡Excelente trabajo!</p>
+                        <p className="text-sm">No tienes llamados de atención ni actas registradas en tu historial.</p>
+                    </div>
                 </div>
             )}
 
-            {/* Modal: Weapon Handover */}
-            {showWeaponModal && assignedWeapon && (
-                <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => setShowWeaponModal(false)}>
-                    <div className="bg-slate-900 rounded-2xl w-full max-w-md p-6 border border-slate-700 space-y-5" onClick={e => e.stopPropagation()}>
-                        <div className="flex justify-between items-center">
-                            <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                                <Shield className="text-red-400" size={22} />
-                                {weaponAction === 'CHECKIN' ? 'Recepción de Armamento' : 'Entrega de Armamento'}
+            {/* Weapon Handover Modal */}
+            {showWeaponModal && weaponInfo && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+                    <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                <Target className="text-orange-400" size={20} />
+                                Relevo de Armamento
                             </h3>
-                            <button onClick={() => setShowWeaponModal(false)} className="text-slate-500 hover:text-white"><X size={20} /></button>
+                            <button onClick={() => { setShowWeaponModal(false); setIsClocking(false); }} className="text-slate-400 hover:text-white transition-colors">
+                                <X size={20} />
+                            </button>
                         </div>
+                        <div className="p-6 space-y-4">
+                            <div className="bg-orange-500/10 border border-orange-500/20 p-4 rounded-xl">
+                                <p className="text-sm text-orange-200 font-medium mb-1">El puesto {employee.posts?.name} tiene asignada el siguiente arma:</p>
+                                <p className="text-white font-bold">{weaponInfo.brand} {weaponInfo.model}</p>
+                                <p className="text-slate-400 text-sm">SN: {weaponInfo.serial_number} • Tipo: {weaponInfo.type}</p>
+                            </div>
 
-                        <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
-                            <div className="text-sm text-slate-400">Arma asignada</div>
-                            <div className="text-white font-bold mt-1">{assignedWeapon.type} — S/N: {assignedWeapon.serial_number}</div>
-                            <div className="text-xs text-slate-500">{assignedWeapon.brand} {assignedWeapon.model} | Cal. {assignedWeapon.caliber}</div>
-                        </div>
-
-                        {weaponAction === 'CHECKIN' && (
                             <div>
-                                <label className="text-sm text-slate-300 font-medium block mb-1">Guardia saliente (nombre)</label>
-                                <input value={outgoingGuardName} onChange={e => setOutgoingGuardName(e.target.value)}
-                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary"
-                                    placeholder="Nombre del guardia que entrega el turno" />
+                                <label className="block text-sm font-medium text-slate-300 mb-1">
+                                    Munición Teórica: <span className="text-white font-bold">{weaponInfo.ammo_count} u.</span>
+                                </label>
+                                <label className="block text-sm font-medium text-slate-300 mt-4 mb-2">
+                                    Munición Real Recibida (Física):
+                                </label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={actualAmmo}
+                                    onChange={(e) => setActualAmmo(parseInt(e.target.value) || 0)}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all font-mono text-xl"
+                                />
                             </div>
-                        )}
 
-                        <div>
-                            <label className="text-sm text-slate-300 font-medium block mb-1">Municiones (cantidad actual)</label>
-                            <input type="number" value={ammoActual} onChange={e => setAmmoActual(e.target.value)}
-                                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
-                            <div className="text-xs text-slate-500 mt-1">Esperadas: {ammoExpected} municiones</div>
-                        </div>
-
-                        {ammoDiff < 0 && (
-                            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 space-y-2">
-                                <div className="text-sm text-red-400 font-bold flex items-center gap-1">
-                                    <AlertTriangle size={14} /> Faltan {Math.abs(ammoDiff)} municiones
+                            {actualAmmo < weaponInfo.ammo_count && (
+                                <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
+                                    <label className="block text-sm font-medium text-red-400">
+                                        Faltan municiones. Por favor justifica el consumo o la pérdida:
+                                    </label>
+                                    <textarea
+                                        value={handoverComments}
+                                        onChange={(e) => setHandoverComments(e.target.value)}
+                                        placeholder="Ej: Se usaron 2 proyectiles durante un disparo de disuasión a las 03:00 am..."
+                                        className="w-full bg-slate-900 border border-red-500/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition-all h-24 resize-none"
+                                        required
+                                    />
                                 </div>
-                                <label className="text-sm text-slate-300 font-medium block">Razón / Observaciones *</label>
-                                <textarea value={ammoNotes} onChange={e => setAmmoNotes(e.target.value)} rows={3}
-                                    className="w-full bg-slate-950 border border-red-500/30 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-red-500"
-                                    placeholder="Explica por qué se utilizaron municiones..." required />
-                            </div>
-                        )}
+                            )}
 
-                        {ammoDiff === 0 && (
-                            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 text-emerald-400 text-sm flex items-center gap-2">
-                                <CheckCircle2 size={16} /> Cantidad de municiones correcta
-                            </div>
-                        )}
-
-                        {ammoDiff > 0 && (
-                            <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3 text-blue-400 text-sm flex items-center gap-2">
-                                <CheckCircle2 size={16} /> {ammoDiff} municiones más que lo registrado
-                            </div>
-                        )}
-
-                        <button onClick={handleWeaponConfirm} disabled={isSubmitting}
-                            className="w-full bg-primary hover:bg-primary-hover disabled:opacity-50 text-white py-3 rounded-xl font-bold transition-colors flex items-center justify-center gap-2">
-                            {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
-                            Confirmar {weaponAction === 'CHECKIN' ? 'Recepción' : 'Entrega'}
-                        </button>
+                        </div>
+                        <div className="p-4 border-t border-slate-700 bg-slate-800/50 flex justify-end gap-3">
+                            <button
+                                onClick={() => { setShowWeaponModal(false); setIsClocking(false); }}
+                                className="px-4 py-2 text-slate-300 hover:text-white transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={() => {
+                                    if (actualAmmo < weaponInfo.ammo_count && !handoverComments.trim()) {
+                                        alert("Debes ingresar un comentario justificando la falta de munición.");
+                                        return;
+                                    }
+                                    executeClockIn(pendingClockInData, {
+                                        weapon_id: weaponInfo.id,
+                                        expected_ammo: weaponInfo.ammo_count,
+                                        actual_ammo: actualAmmo,
+                                        comments: handoverComments
+                                    });
+                                }}
+                                className="bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+                            >
+                                Confirmar y Marcar Entrada
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -637,3 +565,4 @@ const PortalEmpleado: FC = () => {
 };
 
 export default PortalEmpleado;
+
