@@ -12,11 +12,11 @@ const TabExtras: FC = () => {
         const { data, error } = await supabase
             .from('attendance_logs')
             .select(`
-                id, date, calculated_overtime, overtime_status,
+                id, check_in, calculated_overtime, overtime_status,
                 guards ( id, first_name, last_name, ci )
             `)
             .eq('overtime_status', 'PENDING')
-            .order('date', { ascending: false });
+            .order('check_in', { ascending: false });
 
         if (!error && data) {
             setPendingExtras(data);
@@ -82,7 +82,7 @@ const TabExtras: FC = () => {
                         <tbody className="divide-y divide-slate-700/50">
                             {pendingExtras.map((log) => (
                                 <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
-                                    <td className="p-3 text-white text-sm">{log.date}</td>
+                                    <td className="p-3 text-white text-sm">{new Date(log.check_in).toLocaleDateString()}</td>
                                     <td className="p-3">
                                         <p className="text-white text-sm font-medium">{log.guards.first_name} {log.guards.last_name}</p>
                                         <p className="text-xs text-slate-400">CI: {log.guards.ci}</p>
