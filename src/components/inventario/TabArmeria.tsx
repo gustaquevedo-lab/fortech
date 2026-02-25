@@ -58,7 +58,7 @@ const TabArmeria: FC = () => {
             setIsRegisterModalOpen(false);
             setNewWeapon({ type: '', serial_number: '', caliber: '', brand: '', model: '', registration_number: '', dimabel_expiration: '' });
             fetchData();
-        } catch (error) {
+        } catch (error: any) {
             console.error(error);
             alert('Error al registrar el arma: ' + (error.message || JSON.stringify(error)));
         } finally {
