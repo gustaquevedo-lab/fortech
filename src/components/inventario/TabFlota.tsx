@@ -153,8 +153,12 @@ const TabFlota: FC = () => {
     const handleDeleteVehicle = async (id: string) => {
         if (!confirm('¿Estás seguro de que deseas eliminar permanentemente este vehículo? Esta acción no se puede deshacer y fallará si tiene mantenimientos o asignaciones asociadas.')) return;
         try {
-            const { error } = await supabase.from('vehicles').delete().eq('id', id);
+            const { error, count } = await supabase.from('vehicles').delete({ count: 'exact' }).eq('id', id);
             if (error) throw error;
+            if (count === 0) {
+                alert('No se pudo eliminar el vehículo. Es probable que falten permisos (Políticas RLS) en la base de datos.');
+                return;
+            }
             fetchData();
         } catch (error: any) {
             console.error(error);

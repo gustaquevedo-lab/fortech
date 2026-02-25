@@ -102,8 +102,12 @@ const TabArmeria: FC = () => {
     const handleDeleteWeapon = async (id: string) => {
         if (!confirm('¿Estás seguro de que deseas eliminar permanentemente esta arma? Esta acción no se puede deshacer y fallará si el arma tiene historial relacionado (logs, asignaciones).')) return;
         try {
-            const { error } = await supabase.from('weapons').delete().eq('id', id);
+            const { error, count } = await supabase.from('weapons').delete({ count: 'exact' }).eq('id', id);
             if (error) throw error;
+            if (count === 0) {
+                alert('No se pudo eliminar el arma. Es probable que falten permisos (Políticas RLS) en la base de datos.');
+                return;
+            }
             fetchData();
         } catch (error: any) {
             console.error(error);
