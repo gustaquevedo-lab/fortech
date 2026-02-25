@@ -1,7 +1,3 @@
-src/views/ChangePassword.tsx(4,1): error TS6133: 'useNavigate' is declared but its value is never read.
-src/views/ModuloContratos.tsx(9,38): error TS6133: 'Users' is declared but its value is never read.
-src/views/ModuloContratos.tsx(9,61): error TS6133: 'CheckCircle2' is declared but its value is never read.
-src/views/ModuloContratos.tsx(9,75): error TS6133: 'AlertCircle' is declared but its value is never read.
-src/views/ModuloContratos.tsx(10,40): error TS6133: 'Filter' is declared but its value is never read.
-src/views/ModuloContratos.tsx(230,11): error TS6133: 'allTotalPosts' is declared but its value is never read.
-src/views/ModuloContratos.tsx(230,64): error TS6133: 'c' is declared but its value is never read.
+src/components/hr/TabTurnos.tsx(2,96): error TS6133: 'Edit2' is declared but its value is never read.
+src/components/hr/TabTurnos.tsx(150,37): error TS2339: Property 'length' does not exist on type 'number'.
+src/components/hr/TabTurnos.tsx(164,37): error TS2339: Property 'length' does not exist on type 'number'.

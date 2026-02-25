@@ -1,5 +1,5 @@
 import { type FC, useState, useEffect } from 'react';
-import { Calendar as CalendarIcon, Plus, Users, Loader2, ChevronLeft, ChevronRight, X, Trash2, Edit2, MapPin } from 'lucide-react';
+import { Calendar as CalendarIcon, Plus, Users, Loader2, ChevronLeft, ChevronRight, X, Trash2, MapPin } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 interface Employee {
@@ -137,7 +137,7 @@ const TabTurnos: FC = () => {
         setIsSubmitting(true);
         try {
             if (editingShift) {
-                const { error, count } = await supabase.from('shifts').update({
+                const { error, data } = await supabase.from('shifts').update({
                     guard_id: form.guard_id,
                     post_id: form.post_id || null,
                     date: form.date,
@@ -147,11 +147,11 @@ const TabTurnos: FC = () => {
                 }).eq('id', editingShift.id).select();
 
                 if (error) throw error;
-                if (!count || count.length === 0) {
+                if (!data || data.length === 0) {
                     alert("No se pudo actualizar. Falta RLS policy UPDATE para 'shifts'.");
                 }
             } else {
-                const { error, count } = await supabase.from('shifts').insert({
+                const { error, data } = await supabase.from('shifts').insert({
                     guard_id: form.guard_id,
                     post_id: form.post_id || null,
                     date: form.date,
@@ -161,7 +161,7 @@ const TabTurnos: FC = () => {
                 }).select();
 
                 if (error) throw error;
-                if (!count || count.length === 0) {
+                if (!data || data.length === 0) {
                     alert("No se pudo insertar. Falta RLS policy INSERT para 'shifts'.");
                 }
             }
