@@ -1,6 +1,6 @@
 import { type FC, useState, useEffect } from 'react';
 import {
-    Plus, X, Loader2, Search, AlertTriangle, CheckCircle2, Wrench, Fuel, Calendar, ChevronDown, ChevronUp, MapPin, ShieldAlert
+    Plus, X, Loader2, Search, AlertTriangle, CheckCircle2, Wrench, Fuel, Calendar, ChevronDown, ChevronUp, MapPin, ShieldAlert, Edit2, Trash2
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
@@ -44,6 +44,13 @@ const TabFlota: FC = () => {
 
     // Register Vehicle Form
     const [newVehicle, setNewVehicle] = useState({
+        type: '', brand: '', model: '', year: '', plate_number: '', color: '', vin: '',
+        fuel_type: 'GASOLINA', km_current: '', assigned_to: '', insurance_expiration: '', inspection_expiration: '', municipality: '', notes: ''
+    });
+
+    // Edit Form
+    const [editingVehicle, setEditingVehicle] = useState<any>(null);
+    const [editVehicleForm, setEditVehicleForm] = useState({
         type: '', brand: '', model: '', year: '', plate_number: '', color: '', vin: '',
         fuel_type: 'GASOLINA', km_current: '', assigned_to: '', insurance_expiration: '', inspection_expiration: '', municipality: '', notes: ''
     });
@@ -108,6 +115,51 @@ const TabFlota: FC = () => {
             console.error(error);
             alert('Error al registrar vehículo.');
         } finally { setIsSubmitting(false); }
+    };
+
+    const handleUpdateVehicle = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingVehicle) return;
+        setIsSubmitting(true);
+        try {
+            const { error } = await supabase.from('vehicles').update({
+                type: editVehicleForm.type,
+                brand: editVehicleForm.brand,
+                model: editVehicleForm.model,
+                year: editVehicleForm.year ? parseInt(editVehicleForm.year) : null,
+                plate_number: editVehicleForm.plate_number || null,
+                color: editVehicleForm.color || null,
+                vin: editVehicleForm.vin || null,
+                fuel_type: editVehicleForm.fuel_type,
+                km_current: editVehicleForm.km_current ? parseInt(editVehicleForm.km_current) : 0,
+                assigned_to: editVehicleForm.assigned_to || null,
+                insurance_expiration: editVehicleForm.insurance_expiration || null,
+                inspection_expiration: editVehicleForm.inspection_expiration || null,
+                municipality: editVehicleForm.municipality || null,
+                notes: editVehicleForm.notes || null
+            }).eq('id', editingVehicle.id);
+
+            if (error) throw error;
+            setEditingVehicle(null);
+            fetchData();
+        } catch (error: any) {
+            console.error(error);
+            alert('Error al actualizar el vehículo: ' + (error.message || JSON.stringify(error)));
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleDeleteVehicle = async (id: string) => {
+        if (!confirm('¿Estás seguro de que deseas eliminar permanentemente este vehículo? Esta acción no se puede deshacer y fallará si tiene mantenimientos o asignaciones asociadas.')) return;
+        try {
+            const { error } = await supabase.from('vehicles').delete().eq('id', id);
+            if (error) throw error;
+            fetchData();
+        } catch (error: any) {
+            console.error(error);
+            alert('Error al eliminar vehículo. Puede que tenga registros asociados: ' + (error.message || JSON.stringify(error)));
+        }
     };
 
     const handleAddMaintenance = async (e: React.FormEvent) => {
@@ -360,9 +412,31 @@ const TabFlota: FC = () => {
                                                 <p className="text-slate-500 text-xs">{vType.label} {v.year ? `• ${v.year}` : ''} {v.color ? `• ${v.color}` : ''}</p>
                                             </div>
                                         </div>
-                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 ${st.cls}`}>
-                                            <span className={`w-1.5 h-1.5 rounded-full ${st.dotCls}`}></span>{st.label}
-                                        </span>
+                                        <div className="flex flex-col items-end gap-2">
+                                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 ${st.cls}`}>
+                                                <span className={`w-1.5 h-1.5 rounded-full ${st.dotCls}`}></span>{st.label}
+                                            </span>
+                                            <div className="flex items-center gap-1">
+                                                <button onClick={() => {
+                                                    setEditingVehicle(v);
+                                                    setEditVehicleForm({
+                                                        type: v.type || '', brand: v.brand || '', model: v.model || '',
+                                                        year: v.year ? v.year.toString() : '', plate_number: v.plate_number || '',
+                                                        color: v.color || '', vin: v.vin || '', fuel_type: v.fuel_type || 'GASOLINA',
+                                                        km_current: v.km_current ? v.km_current.toString() : '0',
+                                                        assigned_to: v.assigned_to || '',
+                                                        insurance_expiration: v.insurance_expiration ? v.insurance_expiration.split('T')[0] : '',
+                                                        inspection_expiration: v.inspection_expiration ? v.inspection_expiration.split('T')[0] : '',
+                                                        municipality: v.municipality || '', notes: v.notes || ''
+                                                    });
+                                                }} className="p-1 text-slate-400 hover:text-blue-400 transition-colors" title="Editar">
+                                                    <Edit2 size={14} />
+                                                </button>
+                                                <button onClick={() => handleDeleteVehicle(v.id)} className="p-1 text-slate-400 hover:text-red-400 transition-colors" title="Eliminar">
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
 
                                     {/* Details */}
@@ -574,6 +648,115 @@ const TabFlota: FC = () => {
                                 <button type="button" onClick={() => setIsRegisterModalOpen(false)} className="px-4 py-2 rounded-lg text-slate-300 hover:bg-slate-800 transition-colors">Cancelar</button>
                                 <button type="submit" disabled={isSubmitting} className="bg-primary hover:bg-primary/90 text-white px-6 py-2 rounded-lg font-medium shadow-[0_0_15px_rgba(19,91,236,0.3)] transition-all flex items-center gap-2 disabled:opacity-50">
                                     {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />} Registrar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Vehicle Modal */}
+            {editingVehicle && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+                        <div className="flex justify-between items-center p-6 border-b border-slate-800 sticky top-0 bg-slate-900 z-10">
+                            <h3 className="text-xl font-bold text-white font-grotesk">Editar Vehículo</h3>
+                            <button onClick={() => setEditingVehicle(null)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+                        </div>
+                        <form onSubmit={handleUpdateVehicle} className="p-6 space-y-4">
+                            <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Tipo *</label>
+                                    <select required value={editVehicleForm.type} onChange={e => setEditVehicleForm({ ...editVehicleForm, type: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                        <option value="">Seleccionar</option>
+                                        {Object.entries(VEHICLE_TYPES).map(([k, v]) => <option key={k} value={k}>{v.emoji} {v.label}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Marca *</label>
+                                    <input required type="text" value={editVehicleForm.brand} onChange={e => setEditVehicleForm({ ...editVehicleForm, brand: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Modelo *</label>
+                                    <input required type="text" value={editVehicleForm.model} onChange={e => setEditVehicleForm({ ...editVehicleForm, model: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-4 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Año</label>
+                                    <input type="number" value={editVehicleForm.year} onChange={e => setEditVehicleForm({ ...editVehicleForm, year: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Placa</label>
+                                    <input type="text" value={editVehicleForm.plate_number} onChange={e => setEditVehicleForm({ ...editVehicleForm, plate_number: e.target.value.toUpperCase() })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary font-mono" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Color</label>
+                                    <input type="text" value={editVehicleForm.color} onChange={e => setEditVehicleForm({ ...editVehicleForm, color: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Combustible</label>
+                                    <select value={editVehicleForm.fuel_type} onChange={e => setEditVehicleForm({ ...editVehicleForm, fuel_type: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                        <option value="GASOLINA">Gasolina</option>
+                                        <option value="DIESEL">Diésel</option>
+                                        <option value="GAS">Gas</option>
+                                        <option value="ELECTRICO">Eléctrico</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">VIN (Chasis)</label>
+                                    <input type="text" value={editVehicleForm.vin} onChange={e => setEditVehicleForm({ ...editVehicleForm, vin: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary font-mono" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Km Actuales</label>
+                                    <input type="number" value={editVehicleForm.km_current} onChange={e => setEditVehicleForm({ ...editVehicleForm, km_current: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Conductor Asignado</label>
+                                    <select value={editVehicleForm.assigned_to} onChange={e => setEditVehicleForm({ ...editVehicleForm, assigned_to: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                        <option value="">Sin asignar</option>
+                                        {guards.map(g => <option key={g.id} value={g.id}>{g.first_name} {g.last_name}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Vencimiento de Seguro</label>
+                                    <input type="date" value={editVehicleForm.insurance_expiration} onChange={e => setEditVehicleForm({ ...editVehicleForm, insurance_expiration: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Venc. Patente de Rodados</label>
+                                    <input type="date" value={editVehicleForm.inspection_expiration} onChange={e => setEditVehicleForm({ ...editVehicleForm, inspection_expiration: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1 flex items-center gap-1"><MapPin size={12} /> Municipio Registro</label>
+                                    <input type="text" value={editVehicleForm.municipality} onChange={e => setEditVehicleForm({ ...editVehicleForm, municipality: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Notas</label>
+                                <textarea value={editVehicleForm.notes} onChange={e => setEditVehicleForm({ ...editVehicleForm, notes: e.target.value })}
+                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary resize-none h-16" />
+                            </div>
+                            <div className="pt-4 border-t border-slate-800 flex justify-end gap-3">
+                                <button type="button" onClick={() => setEditingVehicle(null)} className="px-4 py-2 rounded-lg text-slate-300 hover:bg-slate-800 transition-colors">Cancelar</button>
+                                <button type="submit" disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium shadow-[0_0_15px_rgba(37,99,235,0.3)] transition-all flex items-center gap-2 disabled:opacity-50">
+                                    {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : 'Guardar Cambios'}
                                 </button>
                             </div>
                         </form>

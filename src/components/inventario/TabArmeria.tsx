@@ -1,6 +1,6 @@
 import { type FC, useState, useEffect } from 'react';
 import {
-    ShieldCheck, Plus, X, Loader2, Search, AlertTriangle
+    ShieldCheck, Plus, X, Loader2, Search, AlertTriangle, Edit2, Trash2
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
@@ -20,6 +20,13 @@ const TabArmeria: FC = () => {
     // Register Form
     const [newWeapon, setNewWeapon] = useState({
         type: 'Pistola', serial_number: '', caliber: '', brand: '', model: '',
+        registration_number: '', dimabel_expiration: ''
+    });
+
+    // Edit Form
+    const [editingWeapon, setEditingWeapon] = useState<any>(null);
+    const [editWeaponForm, setEditWeaponForm] = useState({
+        type: '', serial_number: '', caliber: '', brand: '', model: '',
         registration_number: '', dimabel_expiration: ''
     });
 
@@ -56,13 +63,51 @@ const TabArmeria: FC = () => {
             });
             if (error) throw error;
             setIsRegisterModalOpen(false);
-            setNewWeapon({ type: '', serial_number: '', caliber: '', brand: '', model: '', registration_number: '', dimabel_expiration: '' });
+            setNewWeapon({ type: 'Pistola', serial_number: '', caliber: '', brand: '', model: '', registration_number: '', dimabel_expiration: '' });
             fetchData();
         } catch (error: any) {
             console.error(error);
             alert('Error al registrar el arma: ' + (error.message || JSON.stringify(error)));
         } finally {
             setIsSubmitting(false);
+        }
+    };
+
+    const handleUpdateWeapon = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingWeapon) return;
+        setIsSubmitting(true);
+        try {
+            const { error } = await supabase.from('weapons').update({
+                type: editWeaponForm.type,
+                serial_number: editWeaponForm.serial_number,
+                caliber: editWeaponForm.caliber || null,
+                brand: editWeaponForm.brand || null,
+                model: editWeaponForm.model || null,
+                registration_number: editWeaponForm.registration_number || null,
+                dimabel_expiration: editWeaponForm.dimabel_expiration || null
+            }).eq('id', editingWeapon.id);
+
+            if (error) throw error;
+            setEditingWeapon(null);
+            fetchData();
+        } catch (error: any) {
+            console.error(error);
+            alert('Error al actualizar el arma: ' + (error.message || JSON.stringify(error)));
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleDeleteWeapon = async (id: string) => {
+        if (!confirm('¿Estás seguro de que deseas eliminar permanentemente esta arma? Esta acción no se puede deshacer y fallará si el arma tiene historial relacionado (logs, asignaciones).')) return;
+        try {
+            const { error } = await supabase.from('weapons').delete().eq('id', id);
+            if (error) throw error;
+            fetchData();
+        } catch (error: any) {
+            console.error(error);
+            alert('Error al eliminar arma. Puede que tenga registros asociados: ' + (error.message || JSON.stringify(error)));
         }
     };
 
@@ -225,7 +270,28 @@ const TabArmeria: FC = () => {
                                         <h4 className="text-white font-semibold text-sm">{weapon.type}</h4>
                                         <p className="text-slate-400 text-xs mt-0.5">{weapon.brand} {weapon.model}</p>
                                     </div>
-                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${st.cls}`}>{st.label}</span>
+                                    <div className="flex flex-col items-end gap-2">
+                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${st.cls}`}>{st.label}</span>
+                                        <div className="flex items-center gap-1">
+                                            <button onClick={() => {
+                                                setEditingWeapon(weapon);
+                                                setEditWeaponForm({
+                                                    type: weapon.type || '',
+                                                    serial_number: weapon.serial_number || '',
+                                                    caliber: weapon.caliber || '',
+                                                    brand: weapon.brand || '',
+                                                    model: weapon.model || '',
+                                                    registration_number: weapon.registration_number || '',
+                                                    dimabel_expiration: weapon.dimabel_expiration ? weapon.dimabel_expiration.split('T')[0] : ''
+                                                });
+                                            }} className="p-1 text-slate-400 hover:text-blue-400 transition-colors" title="Editar">
+                                                <Edit2 size={14} />
+                                            </button>
+                                            <button onClick={() => handleDeleteWeapon(weapon.id)} className="p-1 text-slate-400 hover:text-red-400 transition-colors" title="Eliminar">
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div className="space-y-1.5 text-xs">
                                     <div className="flex justify-between"><span className="text-slate-500">Serie:</span><span className="text-slate-300 font-mono">{weapon.serial_number}</span></div>
@@ -363,6 +429,75 @@ const TabArmeria: FC = () => {
                                 <button type="button" onClick={() => setIsAssignModalOpen(false)} className="px-4 py-2 rounded-lg text-slate-300 hover:bg-slate-800 transition-colors">Cancelar</button>
                                 <button type="submit" disabled={isSubmitting || !selectedWeaponId || !selectedGuardId} className="bg-primary hover:bg-primary/90 text-white px-6 py-2 rounded-lg font-medium shadow-[0_0_15px_rgba(19,91,236,0.3)] transition-all flex items-center gap-2 disabled:opacity-50">
                                     {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : 'Confirmar Retiro'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Weapon Modal */}
+            {editingWeapon && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="flex justify-between items-center p-6 border-b border-slate-800">
+                            <h3 className="text-xl font-bold text-white font-grotesk">Editar Arma</h3>
+                            <button onClick={() => setEditingWeapon(null)} className="text-slate-400 hover:text-white"><X size={20} /></button>
+                        </div>
+                        <form onSubmit={handleUpdateWeapon} className="p-6 space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Tipo de Arma *</label>
+                                    <select required value={editWeaponForm.type} onChange={e => setEditWeaponForm({ ...editWeaponForm, type: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary">
+                                        <option value="">Seleccionar</option>
+                                        <option value="Pistola">Pistola</option>
+                                        <option value="Revólver">Revólver</option>
+                                        <option value="Escopeta">Escopeta</option>
+                                        <option value="Carabina">Carabina</option>
+                                        <option value="Fusil">Fusil</option>
+                                        <option value="Otro">Otro</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Número de Serie *</label>
+                                    <input required type="text" value={editWeaponForm.serial_number} onChange={e => setEditWeaponForm({ ...editWeaponForm, serial_number: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Calibre</label>
+                                    <input type="text" value={editWeaponForm.caliber} onChange={e => setEditWeaponForm({ ...editWeaponForm, caliber: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Marca</label>
+                                    <input type="text" value={editWeaponForm.brand} onChange={e => setEditWeaponForm({ ...editWeaponForm, brand: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Modelo</label>
+                                    <input type="text" value={editWeaponForm.model} onChange={e => setEditWeaponForm({ ...editWeaponForm, model: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Registro DIMABEL</label>
+                                    <input type="text" value={editWeaponForm.registration_number} onChange={e => setEditWeaponForm({ ...editWeaponForm, registration_number: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Vencimiento DIMABEL</label>
+                                    <input type="date" value={editWeaponForm.dimabel_expiration} onChange={e => setEditWeaponForm({ ...editWeaponForm, dimabel_expiration: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-primary" />
+                                </div>
+                            </div>
+                            <div className="pt-4 border-t border-slate-800 flex justify-end gap-3">
+                                <button type="button" onClick={() => setEditingWeapon(null)} className="px-4 py-2 rounded-lg text-slate-300 hover:bg-slate-800 transition-colors">Cancelar</button>
+                                <button type="submit" disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium shadow-[0_0_15px_rgba(37,99,235,0.3)] transition-all flex items-center gap-2 disabled:opacity-50">
+                                    {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : 'Guardar Cambios'}
                                 </button>
                             </div>
                         </form>
