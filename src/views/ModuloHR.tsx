@@ -11,6 +11,7 @@ import TabExtras from '../components/hr/TabExtras';
 import TabAjustes from '../components/hr/TabAjustes';
 import TabRecibos from '../components/hr/TabRecibos';
 import TabTurnos from '../components/hr/TabTurnos';
+import EmployeeDetailView from '../components/hr/EmployeeDetailView';
 import TabAusencias from '../components/hr/TabAusencias';
 import TabDocumentos from '../components/hr/TabDocumentos';
 import TabPrestamos from '../components/hr/TabPrestamos';
@@ -31,9 +32,23 @@ const ModuloHR: FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<'nomina' | 'extras' | 'ajustes' | 'recibos' | 'turnos' | 'ausencias' | 'documentos' | 'prestamos' | 'disciplina'>('nomina');
 
+    // Chart Data State
+    const [chartData, setChartData] = useState<any[]>([]);
+
+    // KPI States
+    const [stats, setStats] = useState({
+        activeAttendance: 0,
+        monthlyOvertime: 0,
+        geofenceOk: 0
+    });
+
     // Modal State
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [editingGuardId, setEditingGuardId] = useState<string | null>(null);
+
+    // Profile Detail View State
+    const [selectedDetailGuardId, setSelectedDetailGuardId] = useState<string | null>(null);
 
     // Form State
     const [firstName, setFirstName] = useState('');
@@ -52,41 +67,150 @@ const ModuloHR: FC = () => {
 
     const fetchGuards = async () => {
         setIsLoading(true);
-        const { data } = await supabase
+        const todayStr = new Date().toISOString().split('T')[0];
+        const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+
+        // Calculate last 7 days for the chart
+        const last7Days: string[] = [];
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            last7Days.push(d.toISOString().split('T')[0]);
+        }
+
+        // Fetch Guards
+        const { data: guardsData } = await supabase
             .from('guards')
             .select('*')
             .order('created_at', { ascending: false });
 
-        if (data) {
-            setGuards(data);
+        // Fetch Today's Shifts for the list
+        const { data: shiftsData } = await supabase
+            .from('shifts')
+            .select('*, posts(name)')
+            .eq('date', todayStr);
+
+        // Fetch Active Attendances (KPI)
+        const { data: attendanceLogs } = await supabase
+            .from('attendance_logs')
+            .select('*')
+            .is('check_out', null);
+
+        // Fetch Monthly Overtime (KPI)
+        const { data: overtimeData } = await supabase
+            .from('attendance_logs')
+            .select('calculated_overtime')
+            .gte('date', firstDayOfMonth)
+            .eq('overtime_status', 'APPROVED');
+
+        // Fetch Geofence Stats (KPI)
+        const { data: geofenceData } = await supabase
+            .from('attendance_logs')
+            .select('id')
+            .eq('date', todayStr)
+            .eq('inside_geofence', true);
+
+        // Fetch Weekly Data for Chart
+        const { data: weeklyLogs } = await supabase
+            .from('attendance_logs')
+            .select('date, id')
+            .gte('date', last7Days[0])
+            .lte('date', last7Days[6]);
+
+        if (guardsData) {
+            const enrichedGuards = guardsData.map(g => {
+                const shift = shiftsData?.find(s => s.guard_id === g.id);
+                return {
+                    ...g,
+                    current_shift: shift || null
+                };
+            });
+            setGuards(enrichedGuards);
+
+            // Format Chart Data
+            const activeGuardCount = guardsData.filter(g => g.status === 'ACTIVE').length;
+            const formattedChart = last7Days.map(dateStr => {
+                const dayLogs = weeklyLogs?.filter(l => l.date === dateStr).length || 0;
+                const dayName = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'][new Date(dateStr).getDay()];
+                return {
+                    day: dayName,
+                    present: dayLogs,
+                    absent: Math.max(0, activeGuardCount - dayLogs)
+                };
+            });
+            setChartData(formattedChart);
         }
+
+        setStats({
+            activeAttendance: attendanceLogs?.length || 0,
+            monthlyOvertime: overtimeData?.reduce((acc, curr) => acc + (Number(curr.calculated_overtime) || 0), 0) || 0,
+            geofenceOk: geofenceData?.length || 0
+        });
+
         setIsLoading(false);
     };
 
-    const handleCreateGuard = async (e: React.FormEvent) => {
+    const handleEditGuard = (guard: any) => {
+        setEditingGuardId(guard.id);
+        setFirstName(guard.first_name);
+        setLastName(guard.last_name);
+        setCi(guard.ci);
+        setPhone(guard.phone || '');
+        setHireDate(guard.hire_date || '');
+        setIpsNumber(guard.ips_number || '');
+        setBaseSalary(guard.base_salary ? guard.base_salary.toString() : '');
+        setBankAccount(guard.bank_account || '');
+        setEmployeeType(guard.employee_type || 'GUARDIA');
+        setIsModalOpen(true);
+    };
+
+    const handleDeleteGuard = async (id: string, name: string) => {
+        if (!confirm(`¿Estás seguro de que deseas eliminar a ${name}? Esta acción no se puede deshacer.`)) return;
+
+        try {
+            const { error } = await supabase.from('guards').delete().eq('id', id);
+            if (error) throw error;
+            fetchGuards();
+        } catch (error) {
+            console.error("Error deleting guard:", error);
+            alert("Error al eliminar el personal. Verifique si tiene registros asociados.");
+        }
+    };
+
+    const handleSaveGuard = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSubmitting(true);
 
-        try {
-            const { error } = await supabase
-                .from('guards')
-                .insert({
-                    first_name: firstName,
-                    last_name: lastName,
-                    ci: ci,
-                    phone: phone,
-                    hire_date: hireDate || null,
-                    ips_number: ipsNumber || null,
-                    base_salary: baseSalary ? parseFloat(baseSalary) : null,
-                    bank_account: bankAccount || null,
-                    employee_type: employeeType,
-                    status: 'ACTIVE'
-                });
+        const guardData = {
+            first_name: firstName,
+            last_name: lastName,
+            ci: ci,
+            phone: phone,
+            hire_date: hireDate || null,
+            ips_number: ipsNumber || null,
+            base_salary: baseSalary ? parseFloat(baseSalary) : null,
+            bank_account: bankAccount || null,
+            employee_type: employeeType,
+            status: 'ACTIVE'
+        };
 
-            if (error) throw error;
+        try {
+            if (editingGuardId) {
+                const { error } = await supabase
+                    .from('guards')
+                    .update(guardData)
+                    .eq('id', editingGuardId);
+                if (error) throw error;
+            } else {
+                const { error } = await supabase
+                    .from('guards')
+                    .insert(guardData);
+                if (error) throw error;
+            }
 
             // Reset and close
             setIsModalOpen(false);
+            setEditingGuardId(null);
             setFirstName('');
             setLastName('');
             setCi('');
@@ -100,8 +224,8 @@ const ModuloHR: FC = () => {
             // Refresh list
             fetchGuards();
         } catch (error) {
-            console.error("Error creating employee:", error);
-            alert("Error al registrar el personal.");
+            console.error("Error saving employee:", error);
+            alert("Error al guardar el personal.");
         } finally {
             setIsSubmitting(false);
         }
@@ -151,9 +275,9 @@ const ModuloHR: FC = () => {
                         </div>
                     </div>
                     <div>
-                        <span className="text-3xl font-bold text-white font-grotesk tracking-tighter">-</span>
+                        <span className="text-3xl font-bold text-white font-grotesk tracking-tighter">{isLoading ? '-' : stats.activeAttendance}</span>
                         <p className="text-slate-400 text-sm mt-1">
-                            Esperando marcaciones
+                            Personal en servicio
                         </p>
                     </div>
                 </div>
@@ -166,9 +290,9 @@ const ModuloHR: FC = () => {
                         </div>
                     </div>
                     <div>
-                        <span className="text-3xl font-bold text-white uppercase font-grotesk tracking-tighter">-</span>
+                        <span className="text-3xl font-bold text-white uppercase font-grotesk tracking-tighter">{isLoading ? '-' : stats.monthlyOvertime} hs</span>
                         <p className="text-slate-400 text-sm mt-1">
-                            En cálculo
+                            Aprobadas este mes
                         </p>
                     </div>
                 </div>
@@ -181,9 +305,9 @@ const ModuloHR: FC = () => {
                         </div>
                     </div>
                     <div>
-                        <span className="text-3xl font-bold text-white font-grotesk tracking-tighter">-</span>
+                        <span className="text-3xl font-bold text-white font-grotesk tracking-tighter">{isLoading ? '-' : stats.geofenceOk}</span>
                         <p className="text-slate-400 text-sm mt-1">
-                            Dentro del radio permitido
+                            Verificadas hoy
                         </p>
                     </div>
                 </div>
@@ -266,20 +390,49 @@ const ModuloHR: FC = () => {
                                 <div className="text-center py-10 text-slate-500">No hay personal registrado.</div>
                             ) : (
                                 guards.map(guard => (
-                                    <div key={guard.id} className="p-4 rounded-xl border bg-slate-800/40 border-slate-700/50 hover:border-slate-600 transition-colors cursor-pointer">
+                                    <div key={guard.id} className="p-4 rounded-xl border bg-slate-800/40 border-slate-700/50 hover:border-slate-600 transition-colors cursor-pointer group relative">
                                         <div className="flex justify-between items-start mb-1">
-                                            <h4 className="text-white font-bold text-sm">{guard.first_name} {guard.last_name}</h4>
+                                            <h4 className="text-white font-bold text-sm hover:text-primary transition-colors pr-12" onClick={() => setSelectedDetailGuardId(guard.id)}>{guard.first_name} {guard.last_name}</h4>
                                             <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${guard.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
-                                                {guard.employee_type || 'GUARDIA'} • {guard.status}
+                                                {guard.employee_type || 'GUARDIA'}
                                             </span>
                                         </div>
-                                        <p className="text-xs text-slate-400 mb-2">CI: {guard.ci} • {guard.phone || 'Sin tel.'}</p>
+                                        <div className="flex justify-between items-center mb-2">
+                                            <p className="text-xs text-slate-400">CI: {guard.ci}</p>
+                                            {guard.current_shift ? (
+                                                <span className="text-[10px] bg-primary/20 text-primary px-2 py-0.5 rounded flex items-center gap-1">
+                                                    <MapPin size={10} /> {guard.current_shift.posts?.name || 'Puesto asignado'}
+                                                </span>
+                                            ) : (
+                                                <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-0.5 rounded">Sin turno hoy</span>
+                                            )}
+                                        </div>
+
                                         <div className="flex items-center gap-1 text-xs text-slate-500 mb-1">
                                             <Calendar size={12} /> Alta: {guard.hire_date || 'No registrada'}
                                         </div>
                                         {guard.base_salary && (
-                                            <div className="text-xs text-emerald-500/80 font-mono mt-2 pt-2 border-t border-slate-700/50">
-                                                Salario: Gs. {Number(guard.base_salary).toLocaleString('es-PY')}
+                                            <div className="text-xs text-emerald-500/80 font-mono mt-2 pt-2 border-t border-slate-700/50 flex justify-between items-center">
+                                                <div>
+                                                    <span>Salario:</span>
+                                                    <span className="ml-1">Gs. {Number(guard.base_salary).toLocaleString('es-PY')}</span>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleEditGuard(guard); }}
+                                                        className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
+                                                        title="Editar"
+                                                    >
+                                                        <FileText size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleDeleteGuard(guard.id, `${guard.first_name} ${guard.last_name}`); }}
+                                                        className="p-1 hover:bg-red-500/20 rounded text-slate-400 hover:text-red-400 transition-colors"
+                                                        title="Eliminar"
+                                                    >
+                                                        <X size={14} />
+                                                    </button>
+                                                </div>
                                             </div>
                                         )}
                                     </div>
@@ -293,10 +446,10 @@ const ModuloHR: FC = () => {
 
                         {/* Chart */}
                         <div className="glassmorphism p-6 rounded-2xl">
-                            <h3 className="text-lg font-bold text-white mb-6 font-grotesk">Asistencia Semanal (Demo)</h3>
+                            <h3 className="text-lg font-bold text-white mb-6 font-grotesk">Asistencia Semanal (Real)</h3>
                             <div className="h-64 w-full">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={attendanceData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                    <BarChart data={chartData.length > 0 ? chartData : attendanceData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
                                         <XAxis dataKey="day" stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 12 }} axisLine={false} tickLine={false} />
                                         <YAxis stroke="#94a3b8" tick={{ fill: '#94a3b8' }} axisLine={false} tickLine={false} />
@@ -368,14 +521,14 @@ const ModuloHR: FC = () => {
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
                         <div className="flex justify-between items-center p-6 border-b border-slate-800">
                             <h3 className="text-xl font-bold text-white font-grotesk flex items-center gap-2">
-                                <Users className="text-primary" /> Registrar Nuevo Personal
+                                <Users className="text-primary" /> {editingGuardId ? 'Editar Personal' : 'Registrar Nuevo Personal'}
                             </h3>
-                            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white transition-colors">
+                            <button onClick={() => { setIsModalOpen(false); setEditingGuardId(null); }} className="text-slate-400 hover:text-white transition-colors">
                                 <X size={20} />
                             </button>
                         </div>
 
-                        <form onSubmit={handleCreateGuard} className="p-6 space-y-6">
+                        <form onSubmit={handleSaveGuard} className="p-6 space-y-6">
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-xs text-slate-400 mb-1">Nombre(s) *</label>

@@ -37,14 +37,10 @@ const TabRecibos: FC = () => {
         if (!confirm('¿Desea generar la nómina del periodo seleccionado? Esto calculará el salario en base a los datos actuales.')) return;
 
         setIsGenerating(true);
-        // NOTA DE IMPLEMENTACIÓN: En un sistema real, esto llamaría a un Edge Function en Supabase
-        // que haría los cálculos pesados en el backend. Para el prototipo Frontend, simulamos
-        // el guardado si encontramos guardias activos.
 
         try {
             // 1. Get active guards
             const { data: guards } = await supabase.from('guards').select('*').eq('status', 'ACTIVE');
-
             if (!guards) throw new Error("No guards found");
 
             // 2. Fetch Active Loans
@@ -53,58 +49,90 @@ const TabRecibos: FC = () => {
                 .select('*')
                 .eq('status', 'ACTIVE');
 
-            // 3. Fake insert for demonstration
+            // 3. Fetch All Adjustments for the period
+            const { data: allAdjustments } = await supabase
+                .from('salary_adjustments')
+                .select('*')
+                .eq('period', period);
+
+            // 4. Fetch Approved Overtime for the period
+            const firstDay = `${period}-01`;
+            const lastDay = new Date(periodYear, periodMonth, 0).toISOString().split('T')[0];
+            const { data: approvedLogs } = await supabase
+                .from('attendance_logs')
+                .select('*')
+                .eq('overtime_status', 'APPROVED')
+                .gte('date', firstDay)
+                .lte('date', lastDay);
+
             for (const guard of guards) {
                 const base = Number(guard.base_salary || 2700000);
 
-                // Demo logic: 10% chance of bonus, 20% chance of discount
-                const overtime = Math.random() > 0.5 ? 150000 : 0;
-                const bonus = Math.random() > 0.9 ? 300000 : 0;
-                let discount = Math.random() > 0.8 ? 50000 : 0;
-                // Simulating a quincena advance of 50% of base salary usually
-                const quincena = base * 0.5;
+                // Calculate Overtime Amount
+                const guardLogs = approvedLogs?.filter(l => l.guard_id === guard.id) || [];
+                const totalOvertimeHours = guardLogs.reduce((acc, curr) => acc + (Number(curr.calculated_overtime) || 0), 0);
+                // Simple formula: (Base / 30 / 8) * 1.5 * hours (Very simplified)
+                const overtimeRate = (base / 240) * 1.5;
+                const overtimeAmount = Math.round(totalOvertimeHours * overtimeRate);
 
-                // --- NEW INTEGRATION: Calculate loan installment ---
+                // Calculate Adjustments
+                const guardAdjustments = allAdjustments?.filter(a => a.guard_id === guard.id) || [];
+                const bonusesTotal = guardAdjustments
+                    .filter(a => a.type === 'BONUS')
+                    .reduce((acc, curr) => acc + Number(curr.amount), 0);
+                const discountsAdjustments = guardAdjustments
+                    .filter(a => a.type === 'DISCOUNT')
+                    .reduce((acc, curr) => acc + Number(curr.amount), 0);
+
+                // Quick advance (Conceptual: 50% of base)
+                const quincena = Math.round(base * 0.5);
+
+                // Loan Logic
                 const employeeLoan = activeLoans?.find(loan => loan.guard_id === guard.id);
                 let loanInstallment = 0;
                 let loanId = null;
 
                 if (employeeLoan) {
                     loanInstallment = Math.round(employeeLoan.amount / employeeLoan.installments);
-                    discount += loanInstallment; // Add to discounts
                     loanId = employeeLoan.id;
                 }
-                // ---------------------------------------------------
 
-                const netPay = base + overtime + bonus - discount - quincena;
+                const totalDiscounts = discountsAdjustments + loanInstallment;
+                const netPay = base + overtimeAmount + bonusesTotal - totalDiscounts - quincena;
 
+                // Check if already exists
                 const { data: existing } = await supabase
                     .from('payslips')
                     .select('id')
                     .eq('guard_id', guard.id)
                     .eq('period_month', periodMonth)
                     .eq('period_year', periodYear)
-                    .single();
+                    .maybeSingle();
 
                 if (!existing) {
-                    await supabase.from('payslips').insert({
+                    const { error: insertError } = await supabase.from('payslips').insert({
                         guard_id: guard.id,
                         period_month: periodMonth,
                         period_year: periodYear,
                         base_salary_pro_rated: base,
-                        overtime_amount: overtime,
-                        bonuses_total: bonus,
-                        discounts_total: discount,
+                        overtime_amount: overtimeAmount,
+                        bonuses_total: bonusesTotal,
+                        discounts_total: totalDiscounts,
                         quincena_advance: quincena,
                         net_pay: netPay,
                         status: 'DRAFT'
                     });
 
-                    // Update loan progress conceptually if draft saved
+                    if (insertError) {
+                        console.error(`Error inserting slip for ${guard.id}`, insertError);
+                        continue;
+                    }
+
+                    // Update loan if successful
                     if (loanId && employeeLoan) {
-                        const newInstallmentCount = employeeLoan.current_installment + 1;
+                        const newInstallmentCount = (Number(employeeLoan.current_installment) || 0) + 1;
                         let newStatus = 'ACTIVE';
-                        if (newInstallmentCount >= employeeLoan.installments) {
+                        if (newInstallmentCount >= Number(employeeLoan.installments)) {
                             newStatus = 'PAID';
                         }
 
@@ -120,10 +148,11 @@ const TabRecibos: FC = () => {
             }
 
             await fetchPayslips();
+            alert("Nómina generada exitosamente.");
 
         } catch (err) {
             console.error("Error generating payroll", err);
-            alert("Error al generar la nómina.");
+            alert("Error al generar la nómina: " + (err instanceof Error ? err.message : String(err)));
         } finally {
             setIsGenerating(false);
         }
