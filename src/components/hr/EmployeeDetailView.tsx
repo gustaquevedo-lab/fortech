@@ -1,7 +1,7 @@
 import { type FC, useState, useEffect } from 'react';
 import {
     X, User, Calendar, Clock, HelpCircle, ShieldAlert, BadgeDollarSign, AlertOctagon,
-    FileText, MapPin, Loader2, CheckCircle2, FileWarning
+    FileText, Loader2, CheckCircle2, FileWarning
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
@@ -220,7 +220,7 @@ const EmployeeDetailView: FC<EmployeeDetailViewProps> = ({ guardId, onClose }) =
                                                         <td className="p-4 text-white font-bold">{log.calculated_overtime || 0}</td>
                                                         <td className="p-4">
                                                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${log.overtime_status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-500' :
-                                                                    log.overtime_status === 'REJECTED' ? 'bg-red-500/10 text-red-500' : 'bg-slate-800 text-slate-400'
+                                                                log.overtime_status === 'REJECTED' ? 'bg-red-500/10 text-red-500' : 'bg-slate-800 text-slate-400'
                                                                 }`}>
                                                                 {log.overtime_status || 'N/A'}
                                                             </span>
@@ -251,7 +251,7 @@ const EmployeeDetailView: FC<EmployeeDetailViewProps> = ({ guardId, onClose }) =
                                                 </div>
                                                 <div>
                                                     <span className={`px-2 py-1 rounded text-[10px] font-bold ${r.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-500' :
-                                                            r.status === 'REJECTED' ? 'bg-red-500/10 text-red-500' : 'bg-slate-800 text-slate-400'
+                                                        r.status === 'REJECTED' ? 'bg-red-500/10 text-red-500' : 'bg-slate-800 text-slate-400'
                                                         }`}>
                                                         {r.status}
                                                     </span>

@@ -1,0 +1,5 @@
+
+> fortech@0.0.0 build
+> tsc -b && vite build
+
+src/components/hr/EmployeeDetailView.tsx(4,15): error TS6133: 'MapPin' is declared but its value is never read.
