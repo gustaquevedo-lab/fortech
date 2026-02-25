@@ -391,11 +391,31 @@ const ModuloHR: FC = () => {
                             ) : (
                                 guards.map(guard => (
                                     <div key={guard.id} className="p-4 rounded-xl border bg-slate-800/40 border-slate-700/50 hover:border-slate-600 transition-colors cursor-pointer group relative">
+                                        {/* Action Buttons */}
+                                        <div className="absolute top-4 right-4 flex gap-1 z-10 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleEditGuard(guard); }}
+                                                className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-400 hover:text-primary transition-colors shadow-xl"
+                                                title="Editar"
+                                            >
+                                                <FileText size={14} />
+                                            </button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleDeleteGuard(guard.id, `${guard.first_name} ${guard.last_name}`); }}
+                                                className="p-1.5 bg-slate-900 border border-slate-700 rounded-lg text-slate-400 hover:text-red-400 transition-colors shadow-xl"
+                                                title="Eliminar"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+
                                         <div className="flex justify-between items-start mb-1">
-                                            <h4 className="text-white font-bold text-sm hover:text-primary transition-colors pr-12" onClick={() => setSelectedDetailGuardId(guard.id)}>{guard.first_name} {guard.last_name}</h4>
-                                            <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${guard.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
-                                                {guard.employee_type || 'GUARDIA'}
-                                            </span>
+                                            <h4 className="text-white font-bold text-sm hover:text-primary transition-colors pr-16" onClick={() => setSelectedDetailGuardId(guard.id)}>{guard.first_name} {guard.last_name}</h4>
+                                            <div className="flex flex-col items-end gap-1">
+                                                <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${guard.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
+                                                    {guard.employee_type || 'GUARDIA'}
+                                                </span>
+                                            </div>
                                         </div>
                                         <div className="flex justify-between items-center mb-2">
                                             <p className="text-xs text-slate-400">CI: {guard.ci}</p>
@@ -416,22 +436,6 @@ const ModuloHR: FC = () => {
                                                 <div>
                                                     <span>Salario:</span>
                                                     <span className="ml-1">Gs. {Number(guard.base_salary).toLocaleString('es-PY')}</span>
-                                                </div>
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); handleEditGuard(guard); }}
-                                                        className="p-1 hover:bg-slate-700 rounded text-slate-400 hover:text-white transition-colors"
-                                                        title="Editar"
-                                                    >
-                                                        <FileText size={14} />
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); handleDeleteGuard(guard.id, `${guard.first_name} ${guard.last_name}`); }}
-                                                        className="p-1 hover:bg-red-500/20 rounded text-slate-400 hover:text-red-400 transition-colors"
-                                                        title="Eliminar"
-                                                    >
-                                                        <X size={14} />
-                                                    </button>
                                                 </div>
                                             </div>
                                         )}
