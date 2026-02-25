@@ -379,7 +379,7 @@ const ModuloHR: FC = () => {
                     <div className="glassmorphism p-6 rounded-2xl flex flex-col h-[500px]">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-lg font-bold text-white font-grotesk flex items-center gap-2">
-                                <Users className="text-primary" size={20} /> Nómina de Personal
+                                <Users className="text-primary" size={20} /> Nómina de Personal (V2)
                             </h3>
                         </div>
 
