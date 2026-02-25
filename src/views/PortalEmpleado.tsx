@@ -46,13 +46,30 @@ const PortalEmpleado: FC = () => {
     const fetchEmployeeProfile = async () => {
         setIsLoading(true);
         try {
-            const { data: guardData } = await supabase
+            let { data: guardData } = await supabase
                 .from('guards')
                 .select('*, posts(id, name, address, lat, lng)')
                 .limit(1)
                 .single();
 
             if (guardData) {
+                // Determine today's date in YYYY-MM-DD
+                const todayStr = new Date().toISOString().split('T')[0];
+
+                // Fetch Today's Shift
+                const { data: shiftData } = await supabase
+                    .from('shifts')
+                    .select('*, posts(id, name, address, lat, lng)')
+                    .eq('guard_id', guardData.id)
+                    .eq('date', todayStr)
+                    .maybeSingle();
+
+                if (shiftData && shiftData.posts) {
+                    guardData.post_id = shiftData.post_id;
+                    // @ts-ignore
+                    guardData.posts = shiftData.posts;
+                }
+
                 setEmployee(guardData);
 
                 // Fetch Today's Attendance

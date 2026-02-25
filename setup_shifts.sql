@@ -16,5 +16,5 @@ ALTER TABLE public.shifts ENABLE ROW LEVEL SECURITY;
 -- Crear políticas de acceso total (CRUD) para usuarios autenticados
 CREATE POLICY "Permitir SELECCIONAR turnos" ON public.shifts FOR SELECT TO authenticated USING (true);
 CREATE POLICY "Permitir INSERTAR turnos" ON public.shifts FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "Permitir ACTUALIZAR turnos" ON public.shifts FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir ACTUALIZAR turnos" ON public.shifts FOR UPDATE TO authenticated USING (true);
 CREATE POLICY "Permitir ELIMINAR turnos" ON public.shifts FOR DELETE TO authenticated USING (true);

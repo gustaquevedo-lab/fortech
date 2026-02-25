@@ -92,6 +92,7 @@ const OperacionesCampo: FC = () => {
     const [cpPostId, setCpPostId] = useState('');
     const [cpLat, setCpLat] = useState('');
     const [cpLng, setCpLng] = useState('');
+    const [activeAttendances, setActiveAttendances] = useState<any[]>([]);
 
     useEffect(() => {
         fetchData();
@@ -101,18 +102,20 @@ const OperacionesCampo: FC = () => {
 
     const fetchData = async () => {
         setIsLoading(true);
-        const [incRes, gRes, pRes, rRes, cpRes] = await Promise.all([
+        const [incRes, gRes, pRes, rRes, cpRes, attRes] = await Promise.all([
             supabase.from('incidents').select('*, guards(*)').order('timestamp', { ascending: false }).limit(30),
             supabase.from('guards').select('*').eq('status', 'ACTIVE').order('first_name', { ascending: true }),
             supabase.from('posts').select('*').order('name', { ascending: true }),
             supabase.from('patrol_rounds').select('*, guards(id, first_name, last_name), posts(id, name, lat, lng)').order('created_at', { ascending: false }).limit(50),
             supabase.from('patrol_checkpoints').select('*, posts(id, name)').order('order_index', { ascending: true }),
+            supabase.from('attendance_logs').select('*, guards(*)').is('check_out', null),
         ]);
         if (incRes.data) setIncidents(incRes.data);
         if (gRes.data) setGuards(gRes.data);
         if (pRes.data) setPosts(pRes.data);
         if (rRes.data) setRounds(rRes.data);
         if (cpRes.data) setCheckpoints(cpRes.data);
+        if (attRes.data) setActiveAttendances(attRes.data);
         setIsLoading(false);
     };
 
@@ -208,8 +211,22 @@ const OperacionesCampo: FC = () => {
         const markers: any[] = [];
         // Posts with location
         posts.filter(p => p.lat && p.lng).forEach(p => {
-            const activeRound = rounds.find(r => r.post_id === p.id && r.status === 'IN_PROGRESS');
             const hasSOS = incidents.some(i => i.location?.includes(p.name) && i.type === 'SOS' && i.status === 'OPEN');
+
+            // Check if there is an active attendance (guard checked in) for this post
+            const activeAttendance = activeAttendances.find(a => a.post_id === p.id);
+            // Alternatively, check if there's an active round
+            const activeRound = rounds.find(r => r.post_id === p.id && r.status === 'IN_PROGRESS');
+
+            const isActive = !!activeAttendance || !!activeRound;
+
+            let guardName = null;
+            if (activeAttendance && activeAttendance.guards) {
+                guardName = `${activeAttendance.guards.first_name} ${activeAttendance.guards.last_name}`;
+            } else if (activeRound && activeRound.guards) {
+                guardName = `${activeRound.guards.first_name} ${activeRound.guards.last_name}`;
+            }
+
             markers.push({
                 type: 'post',
                 id: p.id,
@@ -217,8 +234,8 @@ const OperacionesCampo: FC = () => {
                 lng: parseFloat(p.lng),
                 name: p.name,
                 address: p.address,
-                status: hasSOS ? 'SOS' : activeRound ? 'ACTIVE' : 'IDLE',
-                guard: activeRound ? `${activeRound.guards?.first_name} ${activeRound.guards?.last_name}` : null
+                status: hasSOS ? 'SOS' : isActive ? 'ACTIVE' : 'IDLE',
+                guard: guardName
             });
         });
         // Checkpoints
@@ -233,7 +250,7 @@ const OperacionesCampo: FC = () => {
             });
         });
         return markers;
-    }, [posts, rounds, incidents, checkpoints]);
+    }, [posts, rounds, incidents, checkpoints, activeAttendances]);
 
     const mapCenter = useMemo((): [number, number] => {
         const located = posts.filter(p => p.lat && p.lng);
