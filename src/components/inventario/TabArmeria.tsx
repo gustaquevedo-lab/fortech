@@ -19,7 +19,7 @@ const TabArmeria: FC = () => {
 
     // Register Form
     const [newWeapon, setNewWeapon] = useState({
-        type: '', serial_number: '', caliber: '', brand: '', model: '',
+        type: 'Pistola', serial_number: '', caliber: '', brand: '', model: '',
         registration_number: '', dimabel_expiration: ''
     });
 
@@ -60,7 +60,7 @@ const TabArmeria: FC = () => {
             fetchData();
         } catch (error) {
             console.error(error);
-            alert('Error al registrar el arma.');
+            alert('Error al registrar el arma: ' + (error.message || JSON.stringify(error)));
         } finally {
             setIsSubmitting(false);
         }
